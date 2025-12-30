@@ -1,0 +1,6 @@
+{
+  "INDEXES": ["MOEXBC", "RGBITR", "RUCBITR", "RUMBITR"],
+  "SECURITY_TYPES": ["stock", "gov_bond", "corp_bond", "mun_bond"],
+  "DATE_COL": "TRADEDATE",
+  "YIELD_COL": "YIELD"
+}
