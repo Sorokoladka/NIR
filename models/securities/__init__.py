@@ -1,26 +1,23 @@
 import numpy as np
+import pandas as pd
 
 from scenarios import YIELD_COL, SECURITY_TYPES
 from models.securities.bonds import BondModel, BondParams
 from models.securities.stocks import StockModel, StockParams
 
-from scenarios import SECURITY_TYPES, YIELD_COL
+from scenarios import YIELD_COL
 
 a = 0.1
 b = 0.07
 
-def get_security_params(structure, indexes, id=None, a=a, b=b):
+def get_security_params(indexes: pd.DataFrame, a: float = a, b: float = b, structure: dict = None):
 
     securities = []
+    SECURITY_TYPES = list(structure.keys())
 
     for security_type in SECURITY_TYPES:
 
-        if id is None:
-            weight = structure[security_type].mean()
-        elif id in structure.index:
-            weight = structure.loc[id, security_type].mean()
-        else:
-            raise ValueError(f'Unknown id {id}. Available ids are {structure.index}')
+        weight = structure[security_type]
 
         if 'stock' in security_type:
 

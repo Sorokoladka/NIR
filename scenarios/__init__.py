@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import pyreadstat
 from scipy.stats import weibull_min
+import os
 
 PROJECT_PATH = Path(__file__).parent
 CFG_PATH = PROJECT_PATH.joinpath('cfg.json')
@@ -17,8 +18,8 @@ SECURITY_TYPES = CFG["SECURITY_TYPES"]
 DATE_COL = CFG["DATE_COL"]
 YIELD_COL = CFG["YIELD_COL"]
 
-parent_dir = 'data'
-indexes_dir = 'indexes'
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
 
 def process_data(df, security_type):
     df_cpy = df.copy()
@@ -43,11 +44,17 @@ def process_data(df, security_type):
     return df_cpy
 
 # структура портфелей
-structure = pd.read_excel(f'{parent_dir}/structure.xlsx').set_index('id')
+file_path = os.path.join(project_root, 'data', 'structure.xlsx')
+structure = pd.read_excel(file_path).set_index('id')
+# добавим усредненную стратегию
+common_structure = pd.DataFrame(structure.mean() / structure.mean().sum()).T
+structure = pd.concat([structure, common_structure])
 
 # индексы
 for ind, security_type in zip(INDEXES, SECURITY_TYPES):
-    load_data = pd.read_csv(f'{parent_dir}/{indexes_dir}/{ind}.csv', delimiter=';', encoding='cp1251')
+
+    file_path = os.path.join(project_root, 'data', 'indexes', f'{ind}.csv')
+    load_data = pd.read_csv(file_path, delimiter=';', encoding='cp1251')
     processed_data = process_data(df=load_data, security_type=security_type)
 
     if ind == INDEXES[0]:
@@ -63,14 +70,18 @@ for ind, security_type in zip(INDEXES, SECURITY_TYPES):
         indexes = indexes_cpy.merge(processed_data, on=DATE_COL, suffixes=suffixes)
 
 # пожизненные выплаты
-life_table = pd.read_csv(f'{parent_dir}/life_duration.csv', index_col='age')
+
+file_path = os.path.join(project_root, 'data', 'life_duration.csv')
+life_table = pd.read_csv(file_path, index_col='age')
 
 # параметры для безработицы
 
-df = pd.read_excel(f'{parent_dir}/unemployment.xlsx')['Численность выбывших работников в процентах к списочной численности работников\n']
+file_path = os.path.join(project_root, 'data', 'unemployment.xlsx')
+df = pd.read_excel(file_path)['Численность выбывших работников в процентах к списочной численности работников\n']
 unemployment_p = ((df/100 + 1).prod())**(1/len(df)) - 1
 
-df, meta = pyreadstat.read_sav(f'{parent_dir}/ZAN 2024_сайт.sav')
+file_path = os.path.join(project_root, 'data', 'ZAN 2024_сайт.sav')
+df, meta = pyreadstat.read_sav(file_path)
 unempl_data = df[(df['NAS_VOZR'] >= 18) & (df['BZ_PSK'] > 0)]['BZ_PSK'].to_list()
 params = weibull_min.fit(unempl_data, floc=0)
 unemployment_k, unemployment_lambda = params[0], params[2]

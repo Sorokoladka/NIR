@@ -19,7 +19,8 @@ if __name__ == '__main__':
 
     id = 122
     # 1. Модель для портфеля (доходности)
-    securities = get_security_params(structure, indexes, id=id)
+    structure_dict = structure.loc[id].to_dict()
+    securities = get_security_params(structure=structure_dict, indexes=indexes)
     corr_matrix = indexes[[col for col in indexes.columns if YIELD_COL in col]].corr()
 
     portfolio = PortfolioModel(assets=securities, corr_matrix=corr_matrix)
