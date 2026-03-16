@@ -17,17 +17,19 @@ from scenarios import indexes, structure, life_table, INDEXES, SECURITY_TYPES, Y
     unemployment_k, unemployment_p, unemployment_lambda
 from models.securities import get_security_params
 
-# СЦЕНАРИЙ 1
-# Оценим привлекательность pds для разных групп населения по доходу
+# СЦЕНАРИЙ 2
+# если с ростом дохода значение соф-я падает,
+# то есть точка насыщения, при которой нет смысла обращаться к ПДС и т.д.
 
 if __name__ == '__main__':
 
     # 0. debug
-    n_simulations = 1000
+    n_simulations = 2
 
     # 1. задаю срок софинансирования интервалом 15-20 лет
     n = 15
     salary_range = [50000, 100000, 200000]
+    payment_range = np.arange(1, 25)/100
 
     # 2. в данном сценарии не фокусируюсь на демографии - беру случайный тип для исследования (М,45)
     age = 45
@@ -44,6 +46,16 @@ if __name__ == '__main__':
 
     portfolio = PortfolioModel(assets=securities, corr_matrix=corr_matrix)
     simulated_returns[f'pds_{n}'] = portfolio.simulate(n_years=n, n_simulations=n_simulations, dt=1/252)
+
+    # 3.2 для ИИС беру 3 вариант (20/80, 50/50, 80,20)
+    for (stock, bond) in [(0.2,0.8), (0.5,0.5), (0.8,0.2)]:
+
+        structure_dict = {'stock':stock, 'gov_bond':bond}
+        securities = get_security_params(indexes=indexes, structure=structure_dict)
+        corr_matrix = indexes[[col for col in indexes.columns if (YIELD_COL in col) & ('corp' not in col) & ('mun' not in col)]].corr()
+
+        portfolio = PortfolioModel(assets=securities, corr_matrix=corr_matrix)
+        simulated_returns[f'iis-{int(stock*100)}/{int(bond*100)}_{n}'] = portfolio.simulate(n_years=n, n_simulations=n_simulations, dt=1/252)
 
     # 4. макро модели применяем
 
@@ -63,35 +75,36 @@ if __name__ == '__main__':
         result_dict_temp = {}
 
         for salary in salary_range:
-            for i in range(n_simulations):
+            for payment_rate in payment_range:
+                for i in range(n_simulations):
 
-                returns = simulated_returns[scenario][:,i][::252] #на конец каждого года
-                n = len(returns)
+                    returns = simulated_returns[scenario][:,i][::252]
+                    n = len(returns)
 
-                params = ProgramInput(
-                    n = n,
-                    age = 45,
-                    sex = 'M',
-                    rates = returns,
-                    payment_mode = 'relative',
-                    payment_rate = 0.06,
-                    initial_salary = salary,
-                    tax_deduction_rate = 0.13,
-                    salary_model=salary_model,
-                    unemployment_model=unemployment_model
-                )
+                    params = ProgramInput(
+                        n = n,
+                        age = 45,
+                        sex = 'M',
+                        rates = returns,
+                        payment_mode = 'relative',
+                        payment_rate = payment_rate,
+                        initial_salary = salary,
+                        tax_deduction_rate = 0.13,
+                        salary_model=salary_model,
+                        unemployment_model=unemployment_model
+                    )
 
-                if 'pds' in scenario:
-                    program_calculator = PDSProgram(params=params, life_table=life_table)
-                    program_calculator.run()
+                    if 'pds' in scenario:
+                        program_calculator = PDSProgram(params=params, life_table=life_table)
+                        program_calculator.run()
 
-                    result_dict_temp[f'{salary}_{i}'] = program_calculator.compute_metrics()
+                        result_dict_temp[f'{salary}_{payment_rate}_{i}'] = program_calculator.compute_metrics()
 
-                elif 'iis' in scenario:
-                    program_calculator = IIS3Program(params=params, life_table=life_table)
-                    program_calculator.run()
+                    elif 'iis' in scenario:
+                        program_calculator = IIS3Program(params=params, life_table=life_table)
+                        program_calculator.run()
 
-                    result_dict_temp[f'{salary}_{i}'] = program_calculator.compute_metrics()
+                        result_dict_temp[f'{salary}_{payment_rate}_{i}'] = program_calculator.compute_metrics()
 
         result_dict[scenario] = result_dict_temp
 
@@ -100,7 +113,7 @@ if __name__ == '__main__':
     rows = [
         {
             'scenario_n': scenario,
-            'salary_i': salary,
+            'salary_payment_rate_i': salary,
             'metric_name': metric,
             'metric_value': value
         }
@@ -113,10 +126,11 @@ if __name__ == '__main__':
 
     pre_df['scenario'] = pre_df['scenario_n'].apply(lambda x: x.split('_')[0])
     pre_df['n'] = pre_df['scenario_n'].apply(lambda x: int(x.split('_')[-1]))
-    pre_df['salary'] = pre_df['salary_i'].apply(lambda x: int(x.split('_')[0]))
-    pre_df['i'] = pre_df['salary_i'].apply(lambda x: int(x.split('_')[-1]))
-    df = pre_df.drop(columns=['scenario_n','salary_i'])
+    pre_df['salary'] = pre_df['salary_payment_rate_i'].apply(lambda x: int(x.split('_')[0]))
+    pre_df['payment_rate'] = pre_df['salary_payment_rate_i'].apply(lambda x: x.split('_')[1])
+    pre_df['i'] = pre_df['salary_payment_rate_i'].apply(lambda x: int(x.split('_')[-1]))
+    df = pre_df.drop(columns=['scenario_n','salary_payment_rate_i'])
 
-    df.to_csv('temp_data/scenario1.csv', index=False)
+    df.to_csv('temp_data/scenario2.csv', index=False)
 
     print(1)

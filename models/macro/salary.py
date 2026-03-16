@@ -16,21 +16,23 @@ class DeterministicSalaryModel(BaseSalaryModel):
 class StochasticSalaryModel(BaseSalaryModel):
     def __init__(
             self,
+            initial_age: int,
             mu: float = 0.0086,
             rho: float = 0.6,
             ipc: float = 0.0726,
             u_func: Callable[[float], float] = lambda x: 10 * (x-8.8) ** 1.04 * np.exp((8.8 - x) / 28.1)
     ):
+        self.initial_age = initial_age
         self.mu = mu
         self.rho = rho
         self.ipc = ipc
         self.u_func = u_func
 
-    def simulate(self, n_years: int, initial_salary: float, initial_age: int) -> np.ndarray:
+    def simulate(self, n_years: int, initial_salary: float) -> np.ndarray:
         salaries = np.zeros(n_years)
         salaries[0] = initial_salary
         for i in range(1, n_years):
-            growth = self.mu + self.rho * self.ipc + (self.u_func(initial_age+i) / self.u_func(initial_age+i-1) - 1)
+            growth = self.mu + self.rho * self.ipc + (self.u_func(self.initial_age+i) / self.u_func(self.initial_age+i-1) - 1)
             salaries[i] = salaries[i-1] * (1 + growth)
         return np.append(salaries * 12, 0.0)
 

@@ -78,7 +78,7 @@ class BaseProgram(ABC):
                 initial_salary=self.params.initial_salary
             )
         else:
-            self.annual_salaries = np.full(self.params.n, self.params.initial_salary)
+            self.annual_salaries = np.full(self.params.n + 1, float(self.params.initial_salary) * 12)
 
     def _apply_unemployment_shocks(self):
         if self.params.unemployment_model is not None:
