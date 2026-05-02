@@ -15,7 +15,7 @@ class PortfolioModel:
         total_weight = sum(a.get_weight() for a in self.assets)
 
         if not np.isclose(total_weight, 1.0, atol=1e-6):
-            raise ValueError(f"Weigts sum should be equal 1, receive: {total_weight}") #усреднять по всем фондам нельзя
+            raise ValueError(f"Weigts sum should be equal 1, receive: {total_weight}")
 
     def simulate(self, n_years: int, n_simulations: int = 5, dt: float = 1/252, show_progress: bool = True):
         n_steps = int(n_years / dt)

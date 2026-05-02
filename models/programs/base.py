@@ -16,19 +16,17 @@ class ProgramInput:
     sex: Literal['M', 'F']
     rates: Optional[list[float]] = None
 
-    # Взносы
+    # взносы
     payment_mode: Literal['const', 'relative'] = 'const'
     payment_rate: float = None
     fix_payment: float = None
+    initial_salary: Optional[Union[int, float]] = None
 
-    # Макромодели (плагины)
+    # макромодели (плагины)
     salary_model: Optional[BaseSalaryModel] = None
     unemployment_model: Optional[BaseUnemploymentModel] = None
 
-    # Для совместимости: можно передать и скаляры
-    initial_salary: Optional[Union[int, float]] = None
-
-    # Налоговый вычет
+    # налоговый вычет
     tax_deduction_rate: float = 0
 
 
@@ -40,7 +38,6 @@ class BaseProgram(ABC):
 
         self.__check_input__()
 
-        # Инициализация атрибутов
         self.shocks = None
         self.annual_salaries = None
         self.payments = None
@@ -69,8 +66,6 @@ class BaseProgram(ABC):
         self._finalize()
         return self
 
-    # === Макромодели ===
-
     def _simulate_salary(self):
         if self.params.salary_model is not None:
             self.annual_salaries = self.params.salary_model.simulate(
@@ -86,8 +81,6 @@ class BaseProgram(ABC):
             self.annual_salaries *= self.shocks
         else:
             self.shocks = np.ones(self.params.n + 1)
-
-    # === Взносы ===
 
     def _calculate_contributions(self):
         if self.params.payment_mode == 'relative':
@@ -121,12 +114,8 @@ class BaseProgram(ABC):
         self.payments = base_payments
         self.tax_deduction = tax_deduction
 
-    # === Софинансирование ===
-
     def _apply_co_financing(self):
         self.co_financing = np.zeros(self.params.n + 1)
-
-    # === Накопление ===
 
     def _accumulate_with_fees(self):
         self.total_inflows = self.payments + self.tax_deduction + self.co_financing
@@ -146,7 +135,6 @@ class BaseProgram(ABC):
         fee0 = self._calculate_fee(perc0, 0, after0)
         after_fee[0] = after0 - fee0
 
-        # Шаги 1..n-1
         for i in range(1, n):
             do[i] = total_inflows[i] + after_fee[i-1]
             perc = do[i] * rates[i]
@@ -191,7 +179,7 @@ class BaseProgram(ABC):
 
     def get_detailed_report(self) -> pd.DataFrame:
         if self.portfolio_path is None:
-            raise ValueError("Call .run() first")
+            raise ValueError("call .run() first")
 
         n = self.params.n
         years = np.arange(1, n + 2)

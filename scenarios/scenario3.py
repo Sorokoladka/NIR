@@ -140,5 +140,4 @@ if __name__ == '__main__':
     df = pre_df.drop(columns=['scenario_n','salary_salary_model_unemployment_model_i'])
 
     df.to_csv('temp_data/scenario3.csv', index=False)
-
     print(1)

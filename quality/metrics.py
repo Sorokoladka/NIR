@@ -12,7 +12,7 @@ def roi_metric(final_accumulation: float, total_payments: float) -> float:
     return (final_accumulation - total_payments) / total_payments
 
 def irr_metric(payments: np.ndarray, final_accumulation: float) -> float:
-    n = len(payments) - 1  # payments[-1] == 0
+    n = len(payments) - 1
     cf = np.concatenate([-payments[:n], [final_accumulation]])
     try:
         return float(npf_irr(cf))
@@ -22,11 +22,11 @@ def irr_metric(payments: np.ndarray, final_accumulation: float) -> float:
 def twr_metric(portfolio_path: np.ndarray, payments: np.ndarray) -> float:
     n = len(payments) - 1
     returns = []
-    # Шаг 0
+
     beginning_0 = 0 + payments[0]
     r0 = portfolio_path[0] / beginning_0 - 1 if beginning_0 != 0 else 0.0
     returns.append(r0)
-    # Шаги 1..n-1
+
     for i in range(1, n):
         beginning = portfolio_path[i-1] + payments[i]
         r = portfolio_path[i] / beginning - 1 if beginning != 0 else 0.0

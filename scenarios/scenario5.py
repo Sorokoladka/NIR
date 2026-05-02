@@ -17,21 +17,21 @@ from scenarios import indexes, structure, life_table, INDEXES, SECURITY_TYPES, Y
     unemployment_k, unemployment_p, unemployment_lambda
 from models.securities import get_security_params
 
-# СЦЕНАРИЙ 4
-# сформируем портрет (initial_age+sex+initial_salary) с лучшими результатами по ПДС и ИИС3
+# СЦЕНАРИЙ 0
+# Что если я – как образец индивидуальной траектории - захочу завтра вступить в программу?
 
 if __name__ == '__main__':
 
     # 0. debug
-    n_simulations = 2
+    n_simulations = 1
 
     # 1. задаю срок софинансирования интервалом и уровень зп
     n = 15
-    salary_range = [50000, 100000, 150000]
+    salary = 150000
 
-    # 2. демография
-    age_range = np.arange(20,60)
-    sex_range = ['F','M']
+    # 2. моя демография
+    age = 45
+    sex = 'M'
 
     # 3. формирую стратегии инвестирования
     simulated_returns = {}
@@ -45,7 +45,7 @@ if __name__ == '__main__':
     portfolio = PortfolioModel(assets=securities, corr_matrix=corr_matrix)
     simulated_returns[f'pds_{n}'] = portfolio.simulate(n_years=n, n_simulations=n_simulations, dt=1/252)
 
-    # 3.2 для ИИС беру 3 вариант (20/80, 50/50, 80,20)
+    # 3.2 для ИИС беру 3 варианта (20/80, 50/50, 80,20)
     for (stock, bond) in [(0.2,0.8), (0.5,0.5), (0.8,0.2)]:
 
         structure_dict = {'stock':stock, 'gov_bond':bond}
@@ -56,6 +56,10 @@ if __name__ == '__main__':
         simulated_returns[f'iis-{int(stock*100)}/{int(bond*100)}_{n}'] = portfolio.simulate(n_years=n, n_simulations=n_simulations, dt=1/252)
 
     # 4. макро модели применяем
+
+    salary_model = StochasticSalaryModel(
+        initial_age=age
+    )
 
     unemployment_model = WeibullUnemploymentModel( #or None
         p_exit = unemployment_p,
@@ -68,44 +72,35 @@ if __name__ == '__main__':
     for scenario in list(simulated_returns.keys()):
         result_dict_temp = {}
 
-        for salary in salary_range:
-            for age in age_range:
+        for i in range(n_simulations):
 
-                salary_model = StochasticSalaryModel(
-                    initial_age=age
-                )
+            returns = simulated_returns[scenario][:,i][::252]
+            n = len(returns)
 
-                for sex in sex_range:
+            params = ProgramInput(
+                n = n,
+                age = age,
+                sex = sex,
+                rates = returns,
+                payment_mode = 'relative',
+                payment_rate = 0.06,
+                initial_salary = salary,
+                tax_deduction_rate = 0.13,
+                salary_model=salary_model,
+                unemployment_model=unemployment_model
+            )
 
-                    for i in range(n_simulations):
+            if 'pds' in scenario:
+                program_calculator = PDSProgram(params=params, life_table=life_table)
+                program_calculator.run()
 
-                        returns = simulated_returns[scenario][:,i][::252]
-                        n = len(returns)
+                result_dict_temp[f'{salary}_{i}'] = program_calculator.compute_metrics()
 
-                        params = ProgramInput(
-                            n = n,
-                            age = age,
-                            sex = sex,
-                            rates = returns,
-                            payment_mode = 'relative',
-                            payment_rate = 0.06,
-                            initial_salary = salary,
-                            tax_deduction_rate = 0.13,
-                            salary_model=salary_model,
-                            unemployment_model=unemployment_model
-                        )
+            elif 'iis' in scenario:
+                program_calculator = IIS3Program(params=params, life_table=life_table)
+                program_calculator.run()
 
-                        if 'pds' in scenario:
-                            program_calculator = PDSProgram(params=params, life_table=life_table)
-                            program_calculator.run()
-
-                            result_dict_temp[f'{salary}_{age}_{sex}_{i}'] = program_calculator.compute_metrics()
-
-                        elif 'iis' in scenario:
-                            program_calculator = IIS3Program(params=params, life_table=life_table)
-                            program_calculator.run()
-
-                            result_dict_temp[f'{salary}_{age}_{sex}_{i}'] = program_calculator.compute_metrics()
+                result_dict_temp[f'{salary}_{i}'] = program_calculator.compute_metrics()
 
         result_dict[scenario] = result_dict_temp
 
@@ -114,7 +109,7 @@ if __name__ == '__main__':
     rows = [
         {
             'scenario_n': scenario,
-            'salary_age_sex_i': salary,
+            'salary_i': salary,
             'metric_name': metric,
             'metric_value': value
         }
@@ -127,12 +122,10 @@ if __name__ == '__main__':
 
     pre_df['scenario'] = pre_df['scenario_n'].apply(lambda x: x.split('_')[0])
     pre_df['n'] = pre_df['scenario_n'].apply(lambda x: int(x.split('_')[-1]))
-    pre_df['salary'] = pre_df['salary_age_sex_i'].apply(lambda x: int(x.split('_')[0]))
-    pre_df['age'] = pre_df['salary_age_sex_i'].apply(lambda x: int(x.split('_')[1]))
-    pre_df['sex'] = pre_df['salary_age_sex_i'].apply(lambda x: x.split('_')[2])
-    pre_df['i'] = pre_df['salary_age_sex_i'].apply(lambda x: int(x.split('_')[-1]))
-    df = pre_df.drop(columns=['scenario_n','salary_age_sex_i'])
+    pre_df['salary'] = pre_df['salary_i'].apply(lambda x: int(x.split('_')[0]))
+    pre_df['i'] = pre_df['salary_i'].apply(lambda x: int(x.split('_')[-1]))
+    df = pre_df.drop(columns=['scenario_n','salary_i'])
 
-    df.to_csv('temp_data/scenario4.csv', index=False)
+    df.to_csv('temp_data/scenario0.csv', index=False)
 
     print(1)
