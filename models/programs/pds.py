@@ -28,7 +28,7 @@ class PDSProgram(BaseProgram):
 
         self.co_financing = co_fin
 
-    def _calculate_fee(self, perc: float, prev_value: float, current_value: float) -> float:
+    def _calculate_fee(self, perc: float, prev_value: float, current_value: float) -> tuple[float, float, float]:
         var_fee = self.var_rate * perc
         fixed_fee = self.fixed_rate * (prev_value + current_value) / 2
-        return var_fee + fixed_fee
+        return var_fee + fixed_fee, var_fee, fixed_fee

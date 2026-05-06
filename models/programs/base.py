@@ -48,13 +48,13 @@ class BaseProgram(ABC):
         self.final_accumulation = None
         self.first_pension = None
         self.kz = None
+        self._sim_details = None
 
     def __check_input__(self):
-
-        if (self.params.payment_mode == 'relative') & (self.params.payment_rate is None):
+        if (self.params.payment_mode == 'relative') and (self.params.payment_rate is None):
             raise ValueError('Determine payment_rate for relative payment_mode')
 
-        if (self.params.payment_mode == 'const') & (self.params.fix_payment is None):
+        if (self.params.payment_mode == 'const') and (self.params.fix_payment is None):
             raise ValueError('Determine fix_payment for const payment_mode')
 
     def run(self):
@@ -91,12 +91,13 @@ class BaseProgram(ABC):
     def _calculate_salary_contributions(self):
         n = self.params.n
         payments = np.zeros(n)
-        payments[0] = self.annual_salaries[0] * self.params.payment_rate
         tax_deduction = np.zeros(n)
+
+        payments[0] = self.annual_salaries[0] * self.params.payment_rate
 
         for i in range(1, n):
             tax_deduction[i] = payments[i-1] * self.tax
-            payments[i] = self.annual_salaries[i] * self.params.payment_rate + tax_deduction[i]
+            payments[i] = self.annual_salaries[i] * self.params.payment_rate  # без вычета — он идёт отдельным потоком
 
         tax_deduction = np.append(tax_deduction, payments[-1] * self.tax)
         payments = np.append(payments, 0.0)
@@ -119,33 +120,44 @@ class BaseProgram(ABC):
 
     def _accumulate_with_fees(self):
         self.total_inflows = self.payments + self.tax_deduction + self.co_financing
-        portfolio = self._simulate_portfolio_with_fees(self.total_inflows, self.params.rates)
-        self.portfolio_path = portfolio
-        self.final_accumulation = portfolio[-1]
+        self._sim_details = self._simulate_portfolio_with_fees(self.total_inflows, self.params.rates)
+        self.portfolio_path = self._sim_details['after_fee_path']
+        self.final_accumulation = self.portfolio_path[-1]
 
-    def _simulate_portfolio_with_fees(self, total_inflows: np.ndarray, rates: list[float]) -> np.ndarray:
+    def _simulate_portfolio_with_fees(self, total_inflows: np.ndarray, rates: list[float]) -> dict:
         n = len(rates)
         do = np.zeros(n)
+        perc_arr = np.zeros(n)
+        var_fee_arr = np.zeros(n)
+        fixed_fee_arr = np.zeros(n)
+        total_fee_arr = np.zeros(n)
         after_fee = np.zeros(n)
 
-        # Шаг 0
         do[0] = total_inflows[0]
-        perc0 = do[0] * rates[0]
-        after0 = do[0] + perc0
-        fee0 = self._calculate_fee(perc0, 0, after0)
-        after_fee[0] = after0 - fee0
+        perc_arr[0] = do[0] * rates[0]
+        after0 = do[0] + perc_arr[0]
+        total_fee_arr[0], var_fee_arr[0], fixed_fee_arr[0] = self._calculate_fee(perc_arr[0], 0.0, after0)
+        after_fee[0] = after0 - total_fee_arr[0]
 
         for i in range(1, n):
             do[i] = total_inflows[i] + after_fee[i-1]
-            perc = do[i] * rates[i]
-            after_i = do[i] + perc
-            fee = self._calculate_fee(perc, after_fee[i-1], after_i)
-            after_fee[i] = after_i - fee
+            perc_arr[i] = do[i] * rates[i]
+            after_i = do[i] + perc_arr[i]
+            total_fee_arr[i], var_fee_arr[i], fixed_fee_arr[i] = self._calculate_fee(perc_arr[i], after_fee[i-1], after_i)
+            after_fee[i] = after_i - total_fee_arr[i]
 
-        return np.append(after_fee, after_fee[-1] + self.tax_deduction[-1])
+        return {
+            'do': do,
+            'perc': perc_arr,
+            'var_fee': var_fee_arr,
+            'fixed_fee': fixed_fee_arr,
+            'total_fee': total_fee_arr,
+            'after_fee': after_fee,
+            'after_fee_path': np.append(after_fee, after_fee[-1] + self.tax_deduction[-1]),
+        }
 
-    def _calculate_fee(self, perc, prev_value, current_value):
-        return 0
+    def _calculate_fee(self, perc, prev_value, current_value) -> tuple[float, float, float]:
+        return 0.0, 0.0, 0.0  # total, var, fixed
 
     def compute_metrics(self) -> dict[str, float]:
 
@@ -182,69 +194,43 @@ class BaseProgram(ABC):
             raise ValueError("call .run() first")
 
         n = self.params.n
-        years = np.arange(1, n + 2)
+        d = self._sim_details
 
         monthly_salary = np.full(n + 1, np.nan)
         annual_salary = np.full(n + 1, np.nan)
-        shocks = np.full(n + 1, np.nan)
-        payments = np.full(n + 1, np.nan)
-        tax_deduction = np.full(n + 1, np.nan)
-        co_financing = np.full(n + 1, np.nan)
-        total_inflows = np.full(n + 1, np.nan)
-        do = np.full(n + 1, np.nan)
-        rates_pct = np.full(n + 1, np.nan)
-        perc = np.full(n + 1, np.nan)
-        var_fee = np.full(n + 1, np.nan)
-        fixed_fee = np.full(n + 1, np.nan)
-        total_fee = np.full(n + 1, np.nan)
-        after_fee = np.full(n + 1, np.nan)
-
         monthly_salary[:n] = self.annual_salaries[:n] / 12
         annual_salary[:n] = self.annual_salaries[:n]
-        shocks[:n + 1] = self.shocks
-        payments[:n + 1] = self.payments
-        tax_deduction[:n + 1] = self.tax_deduction
-        co_financing[:n + 1] = self.co_financing
-        total_inflows[:n + 1] = self.total_inflows
 
-        for i in range(n):
-            do[i] = total_inflows[i]
-            rate = self.params.rates[i]
-            rates_pct[i] = rate * 100
-            perc[i] = do[i] * rate
-
-            after_before_fee = do[i] + perc[i]
-            if i == 0:
-                prev_val = 0.0
-            else:
-                prev_val = after_fee[i - 1]
-
-            var_component = getattr(self, 'var_rate', 0.0) * perc[i]
-            fixed_component = getattr(self, 'fixed_rate', 0.0) * (prev_val + after_before_fee) / 2
-
-            var_fee[i] = var_component
-            fixed_fee[i] = fixed_component
-            total_fee[i] = var_component + fixed_component
-            after_fee[i] = after_before_fee - total_fee[i]
-
-        after_fee[n] = self.final_accumulation
+        do_col = np.full(n + 1, np.nan)
+        do_col[:n] = d['do']
+        rates_pct_col = np.full(n + 1, np.nan)
+        rates_pct_col[:n] = np.array(self.params.rates) * 100
+        perc_col = np.full(n + 1, np.nan)
+        perc_col[:n] = d['perc']
+        var_fee_col = np.full(n + 1, np.nan)
+        var_fee_col[:n] = d['var_fee']
+        fixed_fee_col = np.full(n + 1, np.nan)
+        fixed_fee_col[:n] = d['fixed_fee']
+        total_fee_col = np.full(n + 1, np.nan)
+        total_fee_col[:n] = d['total_fee']
+        after_fee_col = np.append(d['after_fee'], self.final_accumulation)
 
         df = pd.DataFrame({
-            'Год': years,
+            'Год': np.arange(1, n + 2),
             'Зарплата (месячная)': monthly_salary,
             'Зарплата (годовая)': annual_salary,
-            'Шок занятости': shocks,
-            'Взнос вкладчика': payments,
-            'Налоговый вычет': tax_deduction,
-            'Софинансирование': co_financing,
-            'Итоговый взнос в год': total_inflows,
-            'Баланс до начисления %': do,
-            'Годовая ставка (%)': rates_pct,
-            'Начисленный доход (руб)': perc,
-            'Комиссия: переменная': var_fee,
-            'Комиссия: фиксированная': fixed_fee,
-            'Итого комиссия': total_fee,
-            'Баланс после комиссии': after_fee
+            'Шок занятости': self.shocks,
+            'Взнос вкладчика': self.payments,
+            'Налоговый вычет': self.tax_deduction,
+            'Софинансирование': self.co_financing,
+            'Итоговый взнос в год': self.total_inflows,
+            'Баланс до начисления %': do_col,
+            'Годовая ставка (%)': rates_pct_col,
+            'Начисленный доход (руб)': perc_col,
+            'Комиссия: переменная': var_fee_col,
+            'Комиссия: фиксированная': fixed_fee_col,
+            'Итого комиссия': total_fee_col,
+            'Баланс после комиссии': after_fee_col
         })
 
         for col in df.select_dtypes(include=[np.number]).columns:
