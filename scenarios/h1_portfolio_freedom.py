@@ -14,6 +14,11 @@
   • ROI  — накопленная доходность на собственные взносы
 Контроль: salary × sex × age (фиксированы)
 
+Сценарии вероятности трудового перехода
+  baseline:    p_transition = calibrated (Weibull, ОРС Росстат 2024) — базовый
+  low_transit: p_transition = 0.10 — низкая вероятность трудового перехода
+  mid_transit: p_transition = 0.15 — умеренная вероятность трудового перехода
+
 Структура ИИС-3
   Облигационная часть делится в пропорциях среднего портфеля НПФ:
     gov_bond ≈ 63.5 %, corp_bond ≈ 33.4 %, mun_bond ≈ 3.1 %
@@ -40,6 +45,10 @@ from models.macro.unemployment import WeibullUnemploymentModel
 from scenarios import (indexes, structure, life_table, YIELD_COL,
                        unemployment_k, unemployment_p, unemployment_lambda)
 from models.securities import get_security_params
+from scenarios.market_scenarios import MARKET_SCENARIOS, build_portfolio_for_scenario
+import os
+
+TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_data')
 
 # ── параметры эксперимента ────────────────────────────────────────────────────
 N_SIMULATIONS = 500
@@ -47,16 +56,24 @@ N_YEARS       = 15
 PAYMENT_RATE  = 0.06          # 6 % от зарплаты
 TAX_RATE      = 0.13
 
-SALARY_RANGE = [50_000, 100_000, 150_000, 200_000]   # покрывает все 3 тира со-фин.
+SALARY_RANGE = [50_000, 100_000, 150_000, 200_000]
 AGE_RANGE    = [30, 45]
 SEX_RANGE    = ['M', 'F']
+
+# ── сценарии вероятности трудового перехода ───────────────────────────────────
+# "baseline" использует откалиброванное значение из ОРС Росстат 2024
+# low_transit / mid_transit — альтернативные сценарии для проверки устойчивости
+TRANSITION_SCENARIOS = {
+    'baseline':    unemployment_p,   # откалиброванное значение
+    'low_transit': 0.10,
+    'mid_transit': 0.15,
+}
 
 # ── порядок активов должен совпадать с порядком YIELD-колонок в indexes ───────
 ASSET_ORDER  = ['stock', 'gov_bond', 'corp_bond', 'mun_bond']
 YIELD_COLS   = [f'{YIELD_COL}_{a}' for a in ASSET_ORDER]
-CORR_4X4     = indexes[YIELD_COLS].corr().values   # 4×4
+CORR_4X4     = indexes[YIELD_COLS].corr().values
 
-# ── пропорции облигационной части из среднего портфеля НПФ ───────────────────
 pds_avg = structure.iloc[-1]
 _bond_total = pds_avg[['gov_bond', 'corp_bond', 'mun_bond']].sum()
 BOND_RATIOS = {
@@ -67,11 +84,6 @@ BOND_RATIOS = {
 
 
 def build_iis3_structure(stock_share: float) -> dict:
-    """
-    Строит словарь весов для ИИС-3 с заданной долей акций.
-    Облигационная часть делится пропорционально среднему НПФ.
-    Порядок ключей: stock → gov_bond → corp_bond → mun_bond (= ASSET_ORDER).
-    """
     bond_share = 1.0 - stock_share
     return {
         'stock':     stock_share,
@@ -81,7 +93,6 @@ def build_iis3_structure(stock_share: float) -> dict:
     }
 
 
-# ── портфели ─────────────────────────────────────────────────────────────────
 PORTFOLIOS = {
     'pds_avg':    structure.iloc[-1][ASSET_ORDER].to_dict(),
     'iis3_20/80': build_iis3_structure(0.20),
@@ -89,64 +100,103 @@ PORTFOLIOS = {
     'iis3_80/20': build_iis3_structure(0.80),
 }
 
-# ── симулируем доходности один раз для каждого портфеля ──────────────────────
+
 if __name__ == '__main__':
 
-    print("Симулирую портфели...")
-    simulated_returns = {}
-    for label, struct_dict in PORTFOLIOS.items():
-        securities = get_security_params(indexes=indexes, structure=struct_dict)
-        portfolio  = PortfolioModel(assets=securities, corr_matrix=CORR_4X4)
-        simulated_returns[label] = portfolio.simulate(
-            n_years=N_YEARS, n_simulations=N_SIMULATIONS, dt=1/252, show_progress=False
-        )
-
-    # ── безработица (общая для всех сценариев) ────────────────────────────────
-    unemployment_model = WeibullUnemploymentModel(
-        p_exit=unemployment_p, weibull_k=unemployment_k, weibull_lambda=unemployment_lambda
-    )
-
-    # ── основной цикл ─────────────────────────────────────────────────────────
     rows = []
 
-    for salary in tqdm(SALARY_RANGE, desc='salary'):
-        for age in AGE_RANGE:
-            salary_model = StochasticSalaryModel(initial_age=age)
-            for sex in SEX_RANGE:
-                for portfolio_label, returns_matrix in simulated_returns.items():
-                    is_pds = portfolio_label.startswith('pds')
+    for market_scenario in MARKET_SCENARIOS:
+        print(f"Симулирую портфели [{market_scenario}]...")
+        simulated_returns = {}
+        for label, struct_dict in PORTFOLIOS.items():
+            simulated_returns[label] = build_portfolio_for_scenario(
+                scenario=market_scenario,
+                indexes=indexes,
+                structure=struct_dict,
+                corr_matrix=CORR_4X4,
+                n_years=N_YEARS,
+                n_simulations=N_SIMULATIONS,
+                yield_col=YIELD_COL,
+                show_progress=False,
+            )
 
-                    for i in range(N_SIMULATIONS):
-                        rates = list(returns_matrix[:, i][::252])
-                        n     = len(rates)
+        for transit_label, p_transit in TRANSITION_SCENARIOS.items():
+            unemployment_model = WeibullUnemploymentModel(
+                p_exit=p_transit, weibull_k=unemployment_k, weibull_lambda=unemployment_lambda
+            )
 
-                        params = ProgramInput(
-                            n=n, age=age, sex=sex,
-                            rates=rates,
-                            payment_mode='relative',
-                            payment_rate=PAYMENT_RATE,
-                            initial_salary=salary,
-                            tax_deduction_rate=TAX_RATE,
-                            salary_model=salary_model,
-                            unemployment_model=unemployment_model,
-                        )
+            for salary in tqdm(SALARY_RANGE,
+                               desc=f'salary [{market_scenario}/{transit_label}]'):
+                for age in AGE_RANGE:
+                    salary_model = StochasticSalaryModel(initial_age=age)
+                    for sex in SEX_RANGE:
+                        for portfolio_label, returns_matrix in simulated_returns.items():
+                            is_pds = portfolio_label.startswith('pds')
 
-                        prog = (PDSProgram(params=params, life_table=life_table)
-                                if is_pds
-                                else IIS3Program(params=params, life_table=life_table))
-                        prog.run()
-                        metrics = prog.compute_metrics()
+                            for i in range(N_SIMULATIONS):
+                                rates = list(returns_matrix[:, i][::252])
+                                n     = len(rates)
 
-                        rows.append({
-                            'program':   'pds'  if is_pds else 'iis3',
-                            'portfolio': portfolio_label,
-                            'salary':    salary,
-                            'age':       age,
-                            'sex':       sex,
-                            'sim_id':    i,
-                            **metrics,
-                        })
+                                params = ProgramInput(
+                                    n=n, age=age, sex=sex,
+                                    rates=rates,
+                                    payment_mode='relative',
+                                    payment_rate=PAYMENT_RATE,
+                                    initial_salary=salary,
+                                    tax_deduction_rate=TAX_RATE,
+                                    salary_model=salary_model,
+                                    unemployment_model=unemployment_model,
+                                )
+
+                                prog = (PDSProgram(params=params, life_table=life_table)
+                                        if is_pds
+                                        else IIS3Program(params=params, life_table=life_table))
+                                prog.run()
+                                metrics = prog.compute_metrics()
+
+                                rows.append({
+                                    'market_scenario':     market_scenario,
+                                    'transition_scenario': transit_label,
+                                    'p_transition':        p_transit,
+                                    'program':   'pds'  if is_pds else 'iis3',
+                                    'portfolio': portfolio_label,
+                                    'salary':    salary,
+                                    'age':       age,
+                                    'sex':       sex,
+                                    'sim_id':    i,
+                                    **metrics,
+                                })
 
     df = pd.DataFrame(rows)
-    df.to_csv('temp_data/h1_portfolio_freedom.csv', index=False)
-    print(f"Сохранено: temp_data/h1_portfolio_freedom.csv  ({len(df)} строк)")
+    df.to_csv(os.path.join(TEMP_DIR, 'h1_portfolio_freedom.csv'), index=False)
+    print(f"Сохранено: {TEMP_DIR}/h1_portfolio_freedom.csv  ({len(df)} строк)")
+
+    # ── описательная статистика по перцентилям (базовый сценарий) ────────────
+    pctiles = [5, 25, 50, 75, 95]
+    print("\n=== Описательная статистика (базовый рыночный + базовый трудовой сценарий) ===")
+    base = df[(df['market_scenario'] == 'baseline') &
+              (df['transition_scenario'] == 'baseline')]
+    for metric in ['twr', 'irr', 'kz']:
+        print(f"\n  {metric.upper()}:")
+        print(f"  {'Портфель':15} " + " ".join(f"p{p:>3}" for p in pctiles) + "   mean    std")
+        for pf in PORTFOLIOS:
+            vals = base.loc[base['portfolio'] == pf, metric].dropna()
+            if len(vals) == 0:
+                continue
+            pcts = np.percentile(vals, pctiles)
+            print(f"  {pf:15} " + " ".join(f"{v:>6.1%}" for v in pcts)
+                  + f"  {vals.mean():>6.1%}  {vals.std():>6.1%}")
+
+    # ── описательная статистика по перцентилям ────────────────────────────────
+    pctiles = [5, 25, 50, 75, 95]
+    print("\n=== Описательная статистика (базовый сценарий безработицы) ===")
+    base = df[df['transition_scenario'] == 'baseline']
+    for metric in ['twr', 'irr', 'kz']:
+        print(f"\n  {metric.upper()}:")
+        print(f"  {'Портфель':15} " + " ".join(f"p{p:>3}" for p in pctiles) + "   mean    std")
+        for pf in PORTFOLIOS:
+            vals = base.loc[base['portfolio'] == pf, metric].dropna()
+            pcts = np.percentile(vals, pctiles)
+            print(f"  {pf:15} " + " ".join(f"{v:>6.1%}" for v in pcts)
+                  + f"  {vals.mean():>6.1%}  {vals.std():>6.1%}")
+

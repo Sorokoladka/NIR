@@ -13,6 +13,11 @@
   адекватности; дополнительно: first_pension, IRR, ROI
 Победитель per ячейки: argmax(E[KZ]) по всем программам
 
+Сценарии вероятности трудового перехода
+  baseline:    p_transition = calibrated (Weibull, ОРС Росстат 2024)
+  low_transit: p_transition = 0.10
+  mid_transit: p_transition = 0.15
+
 Оценка численности потенциальных вкладчиков
 -------------------------------------------
 Источник: Обследование рабочей силы Росстат 2024 (ZAN 2024_сайт.sav)
@@ -38,13 +43,38 @@ from models.macro.unemployment import WeibullUnemploymentModel
 from scenarios import (indexes, structure, life_table, YIELD_COL,
                        unemployment_k, unemployment_p, unemployment_lambda)
 from models.securities import get_security_params
+from scenarios.market_scenarios import MARKET_SCENARIOS, build_portfolio_for_scenario
 import os
+
+TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_data')
 
 # ── параметры ─────────────────────────────────────────────────────────────────
 N_SIMULATIONS = 300
 N_YEARS       = 15
-PAYMENT_RATE  = 0.06
 TAX_RATE      = 0.13
+
+
+def analytical_cap_rate(salary: float) -> float:
+    """Ставка взноса, при которой исчерпывается лимит гос. со-финансирования."""
+    annual = salary * 12
+    if salary < 80_000:
+        return 36_000 / annual
+    elif salary < 150_000:
+        return 72_000 / annual
+    else:
+        return 144_000 / annual
+
+# ── сценарии вероятности трудового перехода ───────────────────────────────────
+TRANSITION_SCENARIOS = {
+    'baseline':    unemployment_p,
+    'low_transit': 0.10,
+    'mid_transit': 0.15,
+}
+
+PAYMENT_SCENARIOS = {
+    'cap_rate':    lambda salary: analytical_cap_rate(salary),
+    '2x_cap_rate': lambda salary: min(analytical_cap_rate(salary) * 2, 0.24),
+}
 
 ASSET_ORDER = ['stock', 'gov_bond', 'corp_bond', 'mun_bond']
 YIELD_COLS  = [f'{YIELD_COL}_{a}' for a in ASSET_ORDER]
@@ -89,6 +119,9 @@ AGE_GROUPS = {
 SEX_RANGE = ['M', 'F']
 
 # ── загрузка представительных зарплат ────────────────────────────────────────
+# Индексация зарплат 2021 → 2026 по данным Росстат (накопленная инфляция ×1.6004)
+_INFLATION_2021_TO_2026 = (1+0.0519)*(1+0.0874)*(1+0.1176)*(1+0.0744)*(1+0.0992)*(1+0.0601)
+
 def load_representative_salaries() -> dict:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     path = os.path.join(project_root, 'data', 'demogr_salaries', 'demogr_salaries_agg.csv')
@@ -96,7 +129,7 @@ def load_representative_salaries() -> dict:
     row_2021 = sal_agg[sal_agg['year'] == 2021].iloc[0]
     salaries = {}
     for group, info in AGE_GROUPS.items():
-        salaries[group] = float(row_2021[info['salary_col']])
+        salaries[group] = float(row_2021[info['salary_col']]) * _INFLATION_2021_TO_2026
     return salaries
 
 
@@ -139,123 +172,139 @@ if __name__ == '__main__':
     rep_salaries = load_representative_salaries()
     zan_weights  = load_zan_weights()
 
-    print("Симулирую портфели...")
-    simulated_returns = {}
-    for label, struct_dict in PORTFOLIOS.items():
-        securities = get_security_params(indexes=indexes, structure=struct_dict)
-        portfolio  = PortfolioModel(assets=securities, corr_matrix=CORR_4X4)
-        simulated_returns[label] = portfolio.simulate(
-            n_years=N_YEARS, n_simulations=N_SIMULATIONS, dt=1/252, show_progress=False
-        )
-
-    unemployment_model = WeibullUnemploymentModel(
-        p_exit=unemployment_p, weibull_k=unemployment_k, weibull_lambda=unemployment_lambda
-    )
-
-    # ── основной цикл ─────────────────────────────────────────────────────────
+    # ── основной цикл по рыночным и трудовым сценариям ────────────────────────
     rows = []
-    for age_group, info in tqdm(AGE_GROUPS.items(), desc='age_group'):
-        age    = info['rep_age']
-        salary = rep_salaries[age_group]
-        salary_model = StochasticSalaryModel(initial_age=age)
+    for market_scenario in MARKET_SCENARIOS:
+        print(f"Симулирую портфели [{market_scenario}]...")
+        simulated_returns = {}
+        for label, struct_dict in PORTFOLIOS.items():
+            simulated_returns[label] = build_portfolio_for_scenario(
+                scenario=market_scenario,
+                indexes=indexes,
+                structure=struct_dict,
+                corr_matrix=CORR_4X4,
+                n_years=N_YEARS,
+                n_simulations=N_SIMULATIONS,
+                yield_col=YIELD_COL,
+                show_progress=False,
+            )
 
-        for sex in SEX_RANGE:
-            for portfolio_label, returns_matrix in simulated_returns.items():
-                is_pds = portfolio_label.startswith('pds')
+        for transit_label, p_transit in TRANSITION_SCENARIOS.items():
+            unemployment_model = WeibullUnemploymentModel(
+                p_exit=p_transit, weibull_k=unemployment_k, weibull_lambda=unemployment_lambda
+            )
 
-                for i in range(N_SIMULATIONS):
-                    rates = list(returns_matrix[:, i][::252])
-                    n     = len(rates)
+            for payment_scenario, rate_fn in PAYMENT_SCENARIOS.items():
+                for age_group, info in tqdm(AGE_GROUPS.items(),
+                                            desc=f'age_group [{market_scenario}/{transit_label}/{payment_scenario}]'):
+                    age          = info['rep_age']
+                    salary       = rep_salaries[age_group]
+                    payment_rate = rate_fn(salary)
+                    salary_model = StochasticSalaryModel(initial_age=age)
 
-                    params = ProgramInput(
-                        n=n, age=age, sex=sex,
-                        rates=rates,
-                        payment_mode='relative',
-                        payment_rate=PAYMENT_RATE,
-                        initial_salary=salary,
-                        tax_deduction_rate=TAX_RATE,
-                        salary_model=salary_model,
-                        unemployment_model=unemployment_model,
-                    )
+                    for sex in SEX_RANGE:
+                        for portfolio_label, returns_matrix in simulated_returns.items():
+                            is_pds = portfolio_label.startswith('pds')
 
-                    prog = (PDSProgram(params=params, life_table=life_table)
-                            if is_pds
-                            else IIS3Program(params=params, life_table=life_table))
-                    prog.run()
-                    m = prog.compute_metrics()
+                            for i in range(N_SIMULATIONS):
+                                rates = list(returns_matrix[:, i][::252])
+                                n     = len(rates)
 
-                    rows.append({
-                        'age_group':   age_group,
-                        'rep_age':     age,
-                        'sex':         sex,
-                        'salary':      round(salary),
-                        'program':     'pds' if is_pds else 'iis3',
-                        'portfolio':   portfolio_label,
-                        'sim_id':      i,
-                        'kz':          m['kz'],
-                        'first_pension': prog.first_pension,
-                        'irr':         m['irr'],
-                        'roi':         m['roi'],
-                        'savings':     m['savings'],
-                    })
+                                params = ProgramInput(
+                                    n=n, age=age, sex=sex,
+                                    rates=rates,
+                                    payment_mode='relative',
+                                    payment_rate=payment_rate,
+                                    initial_salary=salary,
+                                    tax_deduction_rate=TAX_RATE,
+                                    salary_model=salary_model,
+                                    unemployment_model=unemployment_model,
+                                )
+
+                                prog = (PDSProgram(params=params, life_table=life_table)
+                                        if is_pds
+                                        else IIS3Program(params=params, life_table=life_table))
+                                prog.run()
+                                m = prog.compute_metrics()
+
+                                rows.append({
+                                    'market_scenario':     market_scenario,
+                                    'transition_scenario': transit_label,
+                                    'p_transition':        p_transit,
+                                    'payment_scenario':    payment_scenario,
+                                    'age_group':   age_group,
+                                    'rep_age':     age,
+                                    'sex':         sex,
+                                    'salary':      round(salary),
+                                    'payment_rate': round(payment_rate, 4),
+                                    'program':     'pds' if is_pds else 'iis3',
+                                    'portfolio':   portfolio_label,
+                                    'sim_id':      i,
+                                    'kz':          m['kz'],
+                                    'first_pension': prog.first_pension,
+                                    'irr':         m['irr'],
+                                    'roi':         m['roi'],
+                                    'savings':     m['savings'],
+                                })
 
     df = pd.DataFrame(rows)
-    df.to_csv('temp_data/h4_raw.csv', index=False)
-    print(f"Сырые данные: temp_data/h4_raw.csv  ({len(df)} строк)")
+    df.to_csv(os.path.join(TEMP_DIR, 'h4_raw.csv'), index=False)
+    print(f"Сырые данные: {TEMP_DIR}/h4_raw.csv  ({len(df)} строк)")
 
-    # ── карта победителей ─────────────────────────────────────────────────────
-    # Для каждой ячейки (age_group, sex): находим программу с max E[KZ]
-    mean_kz = (
-        df.groupby(['age_group', 'sex', 'portfolio'])['kz']
-        .mean()
-        .reset_index()
-        .rename(columns={'kz': 'mean_kz'})
-    )
+    # ── карта победителей по каждому сценарию ставки взноса ─────────────────
+    pctiles = [5, 25, 50, 75, 95]
+    winner_maps = []
+    pop_summaries = []
 
-    # Лучшее среди всех портфелей для каждого типа программы
-    # iis3_best = max по трём ИИС-3 аллокациям
-    iis3_kz = mean_kz[mean_kz['portfolio'].str.startswith('iis3')]
-    iis3_best = (
-        iis3_kz.groupby(['age_group', 'sex'])['mean_kz']
-        .max()
-        .reset_index()
-        .rename(columns={'mean_kz': 'kz_iis3_best'})
-    )
-    pds_kz = (
-        mean_kz[mean_kz['portfolio'] == 'pds_avg'][['age_group', 'sex', 'mean_kz']]
-        .rename(columns={'mean_kz': 'kz_pds'})
-    )
+    for pay_sc in PAYMENT_SCENARIOS:
+        base = df[(df['market_scenario'] == 'baseline') &
+                  (df['transition_scenario'] == 'baseline') &
+                  (df['payment_scenario'] == pay_sc)]
 
-    winner_map = iis3_best.merge(pds_kz, on=['age_group', 'sex'])
-    winner_map['winner']   = np.where(winner_map['kz_pds'] >= winner_map['kz_iis3_best'],
-                                       'pds', 'iis3')
-    winner_map['kz_delta'] = (winner_map['kz_pds'] - winner_map['kz_iis3_best']).round(4)
+        mean_kz = (
+            base.groupby(['age_group', 'sex', 'portfolio'])['kz']
+            .mean().reset_index().rename(columns={'kz': 'mean_kz'})
+        )
+        iis3_kz   = mean_kz[mean_kz['portfolio'].str.startswith('iis3')]
+        iis3_best = (iis3_kz.groupby(['age_group', 'sex'])['mean_kz']
+                     .max().reset_index().rename(columns={'mean_kz': 'kz_iis3_best'}))
+        pds_kz    = (mean_kz[mean_kz['portfolio'] == 'pds_avg'][['age_group', 'sex', 'mean_kz']]
+                     .rename(columns={'mean_kz': 'kz_pds'}))
 
-    # Присоединяем популяционные веса
-    winner_map = winner_map.merge(
-        zan_weights.assign(age_group=zan_weights['age_group'].astype(str)),
-        on=['age_group', 'sex'],
-        how='left'
-    )
+        wm = iis3_best.merge(pds_kz, on=['age_group', 'sex'])
+        wm['winner']          = np.where(wm['kz_pds'] >= wm['kz_iis3_best'], 'pds', 'iis3')
+        wm['kz_delta']        = (wm['kz_pds'] - wm['kz_iis3_best']).round(4)
+        wm['payment_scenario'] = pay_sc
 
-    winner_map.to_csv('temp_data/h4_winner_map.csv', index=False)
+        pds_pct = (
+            base[base['portfolio'] == 'pds_avg']
+            .groupby(['age_group', 'sex'])['kz']
+            .agg(**{f'kz_pds_p{p}': (lambda x, _p=p: np.percentile(x.dropna(), _p))
+                    for p in pctiles})
+            .reset_index()
+        )
+        wm = wm.merge(pds_pct, on=['age_group', 'sex'], how='left')
+        wm = wm.merge(
+            zan_weights.assign(age_group=zan_weights['age_group'].astype(str)),
+            on=['age_group', 'sex'], how='left'
+        )
+        winner_maps.append(wm)
 
-    # ── сводка потенциальных вкладчиков ──────────────────────────────────────
-    pop_summary = (
-        winner_map.groupby('winner')['population_mln']
-        .sum()
-        .reset_index()
-        .rename(columns={'population_mln': 'population_mln'})
-    )
-    pop_summary['share_pct'] = (
-        pop_summary['population_mln'] / pop_summary['population_mln'].sum() * 100
-    ).round(1)
+        pop = wm.groupby('winner')['population_mln'].sum().reset_index()
+        pop['share_pct'] = (pop['population_mln'] / pop['population_mln'].sum() * 100).round(1)
+        pop['payment_scenario'] = pay_sc
+        pop_summaries.append(pop)
 
-    pop_summary.to_csv('temp_data/h4_population_summary.csv', index=False)
+        print(f"\n=== Карта победителей [{pay_sc}] ===")
+        print(wm[['age_group', 'sex', 'kz_pds', 'kz_iis3_best',
+                   'winner', 'kz_delta', 'population_mln']].to_string(index=False))
 
-    print("\n=== Карта победителей (первые строки) ===")
-    print(winner_map[['age_group', 'sex', 'kz_pds', 'kz_iis3_best',
-                       'winner', 'kz_delta', 'population_mln']].to_string(index=False))
+    winner_map = pd.concat(winner_maps, ignore_index=True)
+    pop_summary = pd.concat(pop_summaries, ignore_index=True)
+
+    winner_map.to_csv(os.path.join(TEMP_DIR, 'h4_winner_map.csv'), index=False)
+    pop_summary.to_csv(os.path.join(TEMP_DIR, 'h4_population_summary.csv'), index=False)
+
     print("\n=== Оценка численности потенциальных вкладчиков ===")
     print(pop_summary.to_string(index=False))
     print("\nСохранено: temp_data/h4_raw.csv, h4_winner_map.csv, h4_population_summary.csv")
