@@ -129,14 +129,14 @@ def plot_percentile_distributions(df: pd.DataFrame):
     pctiles = [5, 25, 50, 75, 95]
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle('H1 — Перцентили доходностей по типу программы/портфеля\n'
+    fig.suptitle('H1 — Перцентили TWR и IRR по типу программы/портфеля\n'
                  '(базовый сценарий трудового перехода)',
                  fontsize=13, y=1.01)
 
     for ax, metric, title in zip(
         axes,
         ['twr', 'irr'],
-        ['TWR — портфельная доходность', 'IRR — полная доходность программы'],
+        ['TWR — взвешенная по времени доходность', 'IRR — полная доходность программы'],
     ):
         x = np.arange(len(portfolio_order))
         width = 0.15
@@ -188,7 +188,7 @@ def plot_transition_scenario_comparison(df: pd.DataFrame):
     for ax, metric, title in zip(
         axes,
         ['twr', 'irr'],
-        ['TWR — портфельная доходность', 'IRR — полная доходность программы'],
+        ['TWR — взвешенная по времени доходность', 'IRR — полная доходность программы'],
     ):
         for scenario in scenarios:
             sub = df[df['transition_scenario'] == scenario]
@@ -261,7 +261,7 @@ def plot_distributions(df: pd.DataFrame):
     for ax, metric, title, fmt in zip(
         axes,
         ['twr', 'irr'],
-        ['TWR (time-weighted return)\nпортфельная доходность',
+        ['TWR (взвешенная по времени доходность)\nбез учёта размера взносов',
          'IRR (внутренняя норма доходности)\nполная доходность программы'],
         [':.1%', ':.1%'],
     ):
@@ -367,6 +367,56 @@ def plot_twr_vs_irr(df: pd.DataFrame):
     print(f"  → {path}")
 
 
+# ─────────────────────────── Figure: market scenario robustness ──────────────
+def plot_market_scenario_comparison(df: pd.DataFrame):
+    """Устойчивость медианных TWR и IRR к рыночным сценариям."""
+    scenarios = [s for s in ['baseline', 'stress', 'optimistic']
+                 if s in df['market_scenario'].unique()]
+    if len(scenarios) < 2:
+        print("  Пропускаю сравнение рыночных сценариев: данные только для одного сценария.")
+        return
+
+    SCENARIO_LABELS = {'baseline': 'Базовый', 'stress': 'Стрессовый', 'optimistic': 'Оптимистичный'}
+    SCENARIO_COLORS = {'baseline': '#2166ac', 'stress': '#d73027', 'optimistic': '#1a9850'}
+    linestyles = {'baseline': '-', 'stress': '--', 'optimistic': ':'}
+    portfolio_order = list(LABELS.keys())
+
+    base_transit = df[df['transition_scenario'] == 'baseline'] if 'transition_scenario' in df.columns else df
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig.suptitle('H1 — Устойчивость результатов к рыночным сценариям\n'
+                 '(медианный TWR и IRR, базовый сценарий трудового перехода)',
+                 fontsize=12, y=1.02)
+
+    for ax, metric, title in zip(
+        axes,
+        ['twr', 'irr'],
+        ['TWR — взвешенная по времени доходность', 'IRR — полная доходность программы'],
+    ):
+        for scenario in scenarios:
+            sub = base_transit[base_transit['market_scenario'] == scenario]
+            medians = [sub.loc[sub['portfolio'] == pf, metric].median()
+                       for pf in portfolio_order]
+            ax.plot(range(len(portfolio_order)), medians,
+                    marker='o', lw=1.8,
+                    color=SCENARIO_COLORS[scenario],
+                    linestyle=linestyles[scenario],
+                    label=SCENARIO_LABELS.get(scenario, scenario))
+
+        ax.set_xticks(range(len(portfolio_order)))
+        ax.set_xticklabels([LABELS[p] for p in portfolio_order], rotation=15, ha='right')
+        ax.set_title(title, fontsize=11)
+        ax.set_ylabel(f'Медиана {metric.upper()}')
+        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=1))
+        ax.legend(fontsize=9)
+
+    plt.tight_layout()
+    path = os.path.join(FIGURES_DIR, 'h1_market_scenarios.png')
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  → {path}")
+
+
 # ─────────────────────────── Statistical tests ───────────────────────────────
 def run_tests(df: pd.DataFrame) -> dict:
     """Манна-Уитни: ПДС vs каждый ИИС-3 по TWR и IRR."""
@@ -422,9 +472,9 @@ def print_verdict(results: dict, df: pd.DataFrame):
     print()
     if twr_wins >= 2:
         print('✓ H1 по TWR: ПОДТВЕРЖДАЕТСЯ — ИИС-3 обеспечивает более высокую')
-        print('  портфельную доходность (свобода выбора портфеля даёт преимущество).')
+        print('  взвешенную по времени доходность (свобода выбора портфеля даёт преимущество).')
     else:
-        print('✗ H1 по TWR: НЕ ПОДТВЕРЖДАЕТСЯ — портфельная доходность ИИС-3')
+        print('✗ H1 по TWR: НЕ ПОДТВЕРЖДАЕТСЯ — взвешенная по времени доходность ИИС-3')
         print('  не превышает ПДС значимо.')
 
     if irr_wins >= 2:
@@ -452,6 +502,7 @@ if __name__ == '__main__':
     plot_twr_vs_irr(df[df['transition_scenario'] == 'baseline'])
     plot_percentile_distributions(df)
     plot_transition_scenario_comparison(df)
+    plot_market_scenario_comparison(df)
 
     print_descriptive_stats(df)
 

@@ -65,6 +65,10 @@ def load_data():
         df['market_scenario'] = 'baseline'
     if 'market_scenario' not in inf.columns:
         inf['market_scenario'] = 'baseline'
+    if 'transition_scenario' not in df.columns:
+        df['transition_scenario'] = 'baseline'
+    if 'transition_scenario' not in inf.columns:
+        inf['transition_scenario'] = 'baseline'
     return df, inf
 
 
@@ -494,6 +498,8 @@ def plot_market_scenario_comparison(df: pd.DataFrame, inf: pd.DataFrame):
     linestyles = {'baseline': '-', 'stress': '--', 'optimistic': ':'}
 
     salary_vals = sorted(df['salary'].unique())
+    base_transit = df[df['transition_scenario'] == 'baseline'] if 'transition_scenario' in df.columns else df
+    base_transit_inf = inf[inf['transition_scenario'] == 'baseline'] if 'transition_scenario' in inf.columns else inf
     fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharey=False)
     axes = axes.flatten()
     fig.suptitle('H2 — Устойчивость точки максимального преимущества ПДС\n'
@@ -502,13 +508,13 @@ def plot_market_scenario_comparison(df: pd.DataFrame, inf: pd.DataFrame):
 
     for ax, salary in zip(axes, salary_vals):
         for scenario in scenarios:
-            sub = df[(df['market_scenario'] == scenario) & (df['salary'] == salary)]
+            sub = base_transit[(base_transit['market_scenario'] == scenario) & (base_transit['salary'] == salary)]
             if sub.empty:
                 continue
             agg = sub.groupby('payment_rate')[['roi_pds', 'roi_iis']].mean().reset_index()
             agg['advantage'] = agg['roi_pds'] - agg['roi_iis']
 
-            inf_row = inf[(inf['market_scenario'] == scenario) & (inf['salary'] == salary)]
+            inf_row = base_transit_inf[(base_transit_inf['market_scenario'] == scenario) & (base_transit_inf['salary'] == salary)]
             peak_r  = inf_row['h2_pds_max_advantage_rate'].values[0] if len(inf_row) else None
 
             ax.plot(agg['payment_rate'] * 100, agg['advantage'],
@@ -536,16 +542,86 @@ def plot_market_scenario_comparison(df: pd.DataFrame, inf: pd.DataFrame):
     print(f"  → {path}")
 
 
+def plot_transition_scenario_comparison(df: pd.DataFrame, inf: pd.DataFrame):
+    """
+    Устойчивость точки максимального преимущества ПДС к сценариям вероятности
+    трудового перехода (advantage = E[ROI_ПДС] − E[ROI_ИИС-3]).
+    """
+    scenarios = [s for s in ['baseline', 'low_transit', 'mid_transit']
+                 if s in df['transition_scenario'].unique()]
+    if len(scenarios) < 2:
+        print("  Пропускаю сравнение сценариев трудового перехода: данные только для одного сценария.")
+        return
+
+    SCENARIO_LABELS = {
+        'baseline':    'Базовый (калибр.)',
+        'low_transit': 'Низкий (p=0.10)',
+        'mid_transit': 'Умеренный (p=0.15)',
+    }
+    SCENARIO_COLORS = {
+        'baseline':    '#2166ac',
+        'low_transit': '#d73027',
+        'mid_transit': '#1a9850',
+    }
+    linestyles = {'baseline': '-', 'low_transit': '--', 'mid_transit': ':'}
+
+    salary_vals = sorted(df['salary'].unique())
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharey=False)
+    axes = axes.flatten()
+    fig.suptitle('H2 — Устойчивость точки максимального преимущества ПДС\n'
+                 'к сценариям вероятности трудового перехода (advantage = E[ROI_ПДС] − E[ROI_ИИС-3])',
+                 fontsize=12, y=1.01)
+
+    base_market = df[df['market_scenario'] == 'baseline'] if 'market_scenario' in df.columns else df
+    base_market_inf = inf[inf['market_scenario'] == 'baseline'] if 'market_scenario' in inf.columns else inf
+
+    for ax, salary in zip(axes, salary_vals):
+        for scenario in scenarios:
+            sub = base_market[(base_market['transition_scenario'] == scenario) & (base_market['salary'] == salary)]
+            if sub.empty:
+                continue
+            agg = sub.groupby('payment_rate')[['roi_pds', 'roi_iis']].mean().reset_index()
+            agg['advantage'] = agg['roi_pds'] - agg['roi_iis']
+
+            inf_row = base_market_inf[(base_market_inf['transition_scenario'] == scenario) & (base_market_inf['salary'] == salary)]
+            peak_r  = inf_row['h2_pds_max_advantage_rate'].values[0] if len(inf_row) else None
+
+            ax.plot(agg['payment_rate'] * 100, agg['advantage'],
+                    color=SCENARIO_COLORS[scenario],
+                    linestyle=linestyles[scenario],
+                    lw=1.8, label=SCENARIO_LABELS[scenario])
+            if peak_r is not None and pd.notna(peak_r):
+                peak_adv = agg.loc[(agg['payment_rate'] - peak_r).abs().idxmin(), 'advantage']
+                ax.scatter([peak_r * 100], [peak_adv],
+                           color=SCENARIO_COLORS[scenario], zorder=5, s=50, marker='^')
+
+        ax.axhline(0, color='#333', lw=0.8)
+        ax.set_title(SALARY_LABELS.get(salary, f'{salary//1000} тыс.'), fontsize=10)
+        ax.set_xlabel('Ставка взноса (%)')
+        ax.set_ylabel('advantage (ROI_ПДС − ROI_ИИС3)')
+        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=1))
+        ax.legend(fontsize=8)
+
+    for ax in axes[len(salary_vals):]:
+        ax.set_visible(False)
+    plt.tight_layout()
+    path = os.path.join(FIGURES_DIR, 'h2h3_transition_scenarios.png')
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  → {path}")
+
+
 if __name__ == '__main__':
     print("Загружаю данные H2/H3...")
     df, inf = load_data()
     print(f"  Строк: {len(df)}, payment_rate: {df['payment_rate'].nunique()} уровней, "
-          f"рыночных сценариев: {df['market_scenario'].nunique()}")
+          f"рыночных сценариев: {df['market_scenario'].nunique()}, "
+          f"трудовых сценариев: {df['transition_scenario'].nunique()}")
 
     os.makedirs(FIGURES_DIR, exist_ok=True)
 
-    base_df  = df[df['market_scenario'] == 'baseline']
-    base_inf = inf[inf['market_scenario'] == 'baseline']
+    base_df  = df[(df['market_scenario'] == 'baseline') & (df['transition_scenario'] == 'baseline')]
+    base_inf = inf[(inf['market_scenario'] == 'baseline') & (inf['transition_scenario'] == 'baseline')]
 
     print("Строю графики...")
     plot_assumptions_table()
@@ -555,6 +631,7 @@ if __name__ == '__main__':
     plot_inflection_table(base_inf)
     plot_percentile_fan(base_df)
     plot_market_scenario_comparison(df, inf)
+    plot_transition_scenario_comparison(df, inf)
 
     print_descriptive_stats(base_df, base_inf)
     print_verdict(base_df, base_inf, poly_results)
