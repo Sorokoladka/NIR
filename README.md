@@ -1,3 +1,3 @@
-# NIR
+# ВКР
 
 in progress..
