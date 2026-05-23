@@ -57,6 +57,23 @@ TRANSITION_LABELS = {
     'mid_transit': 'Умеренный (p=0.15)',
 }
 
+REPRESENTATIVE_AGE = 40
+REPRESENTATIVE_SEX = 'M'
+
+DEMOGRAPHIC_GROUPS = [('M', 20), ('M', 40), ('M', 60), ('F', 20), ('F', 40), ('F', 60)]
+DEMOGRAPHIC_LABELS = {
+    ('M', 20): 'М, 20 лет', ('M', 40): 'М, 40 лет', ('M', 60): 'М, 60 лет',
+    ('F', 20): 'Ж, 20 лет', ('F', 40): 'Ж, 40 лет', ('F', 60): 'Ж, 60 лет',
+}
+DEMOGRAPHIC_COLORS = {
+    ('M', 20): '#1b9e77', ('M', 40): '#d95f02', ('M', 60): '#7570b3',
+    ('F', 20): '#e7298a', ('F', 40): '#66a61e', ('F', 60): '#e6ab02',
+}
+DEMOGRAPHIC_LINESTYLES = {
+    ('M', 20): '-', ('M', 40): '-', ('M', 60): '-',
+    ('F', 20): '--', ('F', 40): '--', ('F', 60): '--',
+}
+
 
 def load_data() -> pd.DataFrame:
     if not os.path.exists(DATA_PATH):
@@ -78,7 +95,7 @@ def plot_assumptions_table():
         ('Число симуляций',                     '500'),
         ('Ставка взноса',                       '6 % от зарплаты'),
         ('Зарплатные группы',                   '50 / 100 / 150 / 200 тыс. ₽/мес.'),
-        ('Возрастные группы',                   '30 и 45 лет'),
+        ('Возрастные группы',                   '20, 40 и 60 лет'),
         ('Пол',                                 'М и Ж'),
         ('Портфель ПДС',                        'Средний НПФ (structure.xlsx)'),
         ('Портфели ИИС-3',                      '20/80, 50/50, 80/20 (акции/облигации)'),
@@ -121,16 +138,15 @@ def plot_assumptions_table():
 
 def plot_percentile_distributions(df: pd.DataFrame):
     """
-    Веерный график перцентилей TWR и IRR по портфелям (базовый сценарий).
-    Показывает риск: 5-й, 25-й, 50-й, 75-й, 95-й перцентили.
+    Наложенные полупрозрачные гистограммы TWR и IRR по портфелям (базовый сценарий).
+    Показывает форму распределения и перекрытие между программами.
     """
     base = df[df['transition_scenario'] == 'baseline']
     portfolio_order = list(LABELS.keys())
-    pctiles = [5, 25, 50, 75, 95]
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle('H1 — Перцентили TWR и IRR по типу программы/портфеля\n'
-                 '(базовый сценарий трудового перехода)',
+    fig.suptitle('H1 — Распределения TWR и IRR по типу программы/портфеля\n'
+                 '(базовый сценарий, М, 40 лет)',
                  fontsize=13, y=1.01)
 
     for ax, metric, title in zip(
@@ -138,26 +154,17 @@ def plot_percentile_distributions(df: pd.DataFrame):
         ['twr', 'irr'],
         ['TWR — взвешенная по времени доходность', 'IRR — полная доходность программы'],
     ):
-        x = np.arange(len(portfolio_order))
-        width = 0.15
-        offsets = np.linspace(-2 * width, 2 * width, len(pctiles))
+        for pf in portfolio_order:
+            vals = base.loc[base['portfolio'] == pf, metric].dropna()
+            ax.hist(vals, bins=40, alpha=0.4, color=COLORS[pf],
+                    label=LABELS[pf], density=True, edgecolor='none')
+            ax.axvline(vals.median(), color=COLORS[pf], linestyle='--', lw=1.3, alpha=0.85)
 
-        PCTILE_COLORS = {5: '#2166ac', 25: '#74add1', 50: '#4dac26', 75: '#f46d43', 95: '#d73027'}
-        for offset, p in zip(offsets, pctiles):
-            vals = [base.loc[base['portfolio'] == pf, metric].dropna()
-                    .quantile(p / 100) for pf in portfolio_order]
-            ax.bar(x + offset, vals, width, color=PCTILE_COLORS[p], alpha=0.85)
-
-        ax.set_xticks(x)
-        ax.set_xticklabels([LABELS[p] for p in portfolio_order], rotation=15, ha='right')
         ax.set_title(title, fontsize=11)
-        ax.set_ylabel(metric.upper())
-        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
-
-        # Легенда перцентилей
-        from matplotlib.patches import Patch
-        legend_elements = [Patch(facecolor=PCTILE_COLORS[p], label=f'p{p}') for p in pctiles]
-        ax.legend(handles=legend_elements, fontsize=8, title='Перцентиль')
+        ax.set_xlabel(metric.upper())
+        ax.set_ylabel('Плотность')
+        ax.xaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+        ax.legend(fontsize=9)
 
     plt.tight_layout()
     path = os.path.join(FIGURES_DIR, 'h1_percentiles.png')
@@ -215,10 +222,10 @@ def plot_transition_scenario_comparison(df: pd.DataFrame):
 
 def print_descriptive_stats(df: pd.DataFrame):
     """Таблица описательной статистики TWR, IRR, KZ по портфелям (базовый сценарий)."""
-    base = df[df['transition_scenario'] == 'baseline']
+    base = df
     pctiles = [5, 25, 50, 75, 95]
     print('\n' + '=' * 80)
-    print('  ОПИСАТЕЛЬНАЯ СТАТИСТИКА (базовый сценарий трудового перехода)')
+    print('  ОПИСАТЕЛЬНАЯ СТАТИСТИКА (базовый сценарий, М, 40 лет)')
     print('=' * 80)
     for metric in ['twr', 'irr', 'kz']:
         print(f"\n  {metric.upper()}:")
@@ -256,7 +263,7 @@ def plot_distributions(df: pd.DataFrame):
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle('H1 — Распределение доходностей по типу программы/портфеля\n'
-                 '(все группы зарплат и возрастов объединены)', fontsize=13, y=1.01)
+                 '(М, 40 лет)', fontsize=13, y=1.01)
 
     for ax, metric, title, fmt in zip(
         axes,
@@ -304,7 +311,7 @@ def plot_by_salary(df: pd.DataFrame):
     palette = [COLORS[p] for p in portfolio_order]
 
     fig, axes = plt.subplots(2, len(salary_vals), figsize=(14, 7), sharey='row')
-    fig.suptitle('H1 — Средние TWR и IRR по уровням зарплаты', fontsize=13, y=1.02)
+    fig.suptitle('H1 — Средние TWR и IRR по уровням зарплаты (М, 40 лет)', fontsize=13, y=1.02)
 
     for col, salary in enumerate(salary_vals):
         sub = df[df['salary'] == salary]
@@ -358,7 +365,7 @@ def plot_twr_vs_irr(df: pd.DataFrame):
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=1))
     ax.set_xlabel('Медианный TWR (портфельная доходность)', fontsize=10)
     ax.set_ylabel('Медианный IRR (полная доходность программы)', fontsize=10)
-    ax.set_title('H1 — Портфельная vs полная доходность\n'
+    ax.set_title('H1 — Портфельная vs полная доходность (М, 40 лет)\n'
                  'Пунктир = уровень ПДС', fontsize=11)
     plt.tight_layout()
     path = os.path.join(FIGURES_DIR, 'h1_twr_vs_irr.png')
@@ -412,6 +419,49 @@ def plot_market_scenario_comparison(df: pd.DataFrame):
 
     plt.tight_layout()
     path = os.path.join(FIGURES_DIR, 'h1_market_scenarios.png')
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  → {path}")
+
+
+def plot_demographic_robustness(df: pd.DataFrame):
+    """
+    Устойчивость медианных TWR и IRR к демографическим группам (возраст × пол).
+    Если линии близки — результат устойчив к демографическим характеристикам.
+    """
+    base = df[(df['transition_scenario'] == 'baseline') &
+              (df['market_scenario'] == 'baseline')]
+    portfolio_order = list(LABELS.keys())
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig.suptitle('H1 — Устойчивость результатов к демографическим группам\n'
+                 '(медианный TWR и IRR, базовый сценарий)',
+                 fontsize=12, y=1.02)
+
+    for ax, metric, title in zip(
+        axes,
+        ['twr', 'irr'],
+        ['TWR — взвешенная по времени доходность', 'IRR — полная доходность программы'],
+    ):
+        for (sex, age) in DEMOGRAPHIC_GROUPS:
+            sub = base[(base['sex'] == sex) & (base['age'] == age)]
+            medians = [sub.loc[sub['portfolio'] == pf, metric].median()
+                       for pf in portfolio_order]
+            ax.plot(range(len(portfolio_order)), medians,
+                    marker='o', lw=1.5,
+                    color=DEMOGRAPHIC_COLORS[(sex, age)],
+                    linestyle=DEMOGRAPHIC_LINESTYLES[(sex, age)],
+                    label=DEMOGRAPHIC_LABELS[(sex, age)])
+
+        ax.set_xticks(range(len(portfolio_order)))
+        ax.set_xticklabels([LABELS[p] for p in portfolio_order], rotation=15, ha='right')
+        ax.set_title(title, fontsize=11)
+        ax.set_ylabel(f'Медиана {metric.upper()}')
+        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=1))
+        ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    path = os.path.join(FIGURES_DIR, 'h1_demographic_robustness.png')
     plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  → {path}")
@@ -495,16 +545,21 @@ if __name__ == '__main__':
 
     os.makedirs(FIGURES_DIR, exist_ok=True)
 
+    repr_df = df[(df['transition_scenario'] == 'baseline') &
+                 (df['age'] == REPRESENTATIVE_AGE) &
+                 (df['sex'] == REPRESENTATIVE_SEX)]
+
     print("Строю графики...")
     plot_assumptions_table()
-    plot_distributions(df[df['transition_scenario'] == 'baseline'])
-    plot_by_salary(df[df['transition_scenario'] == 'baseline'])
-    plot_twr_vs_irr(df[df['transition_scenario'] == 'baseline'])
-    plot_percentile_distributions(df)
+    plot_distributions(repr_df)
+    plot_by_salary(repr_df)
+    plot_twr_vs_irr(repr_df)
+    plot_percentile_distributions(repr_df)
     plot_transition_scenario_comparison(df)
     plot_market_scenario_comparison(df)
+    plot_demographic_robustness(df)
 
-    print_descriptive_stats(df)
+    print_descriptive_stats(repr_df)
 
-    results = run_tests(df[df['transition_scenario'] == 'baseline'])
-    print_verdict(results, df[df['transition_scenario'] == 'baseline'])
+    results = run_tests(repr_df)
+    print_verdict(results, repr_df)

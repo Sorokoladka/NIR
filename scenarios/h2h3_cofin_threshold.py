@@ -56,8 +56,8 @@ TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_data')
 N_SIMULATIONS = 300
 N_YEARS       = 15
 TAX_RATE      = 0.13
-AGE           = 40
-SEX           = 'M'
+AGE_RANGE     = [20, 40, 60]
+SEX_RANGE     = ['M', 'F']
 
 PAYMENT_RATES = np.round(np.arange(0.5, 24.5, 0.5) / 100, 4)   # 48 значений
 SALARY_RANGE  = [50_000, 100_000, 150_000, 200_000]
@@ -118,15 +118,13 @@ def find_inflection_points(rates: np.ndarray, advantage: np.ndarray) -> dict:
 
 if __name__ == '__main__':
 
-    salary_model = StochasticSalaryModel(initial_age=AGE)
-
     TRANSITION_SCENARIOS = {
         'baseline':    unemployment_p,
         'low_transit': 0.10,
         'mid_transit': 0.15,
     }
 
-    # ── основной цикл: market_scenario × transition_scenario × salary × payment_rate ──
+    # ── основной цикл: market_scenario × transition_scenario × age × sex × salary × payment_rate ──
     rows = []
     for market_scenario in MARKET_SCENARIOS:
         print(f"Симулирую общий портфель [{market_scenario}]...")
@@ -146,53 +144,58 @@ if __name__ == '__main__':
                 p_exit=p_transit, weibull_k=unemployment_k, weibull_lambda=unemployment_lambda
             )
 
-            for salary in tqdm(SALARY_RANGE, desc=f'salary [{market_scenario}/{transit_label}]'):
-                for payment_rate in PAYMENT_RATES:
-                    for i in range(N_SIMULATIONS):
-                        rates_vec = list(base_returns[:, i][::252])
-                        n = len(rates_vec)
+            for age in AGE_RANGE:
+                salary_model = StochasticSalaryModel(initial_age=age)
+                for sex in SEX_RANGE:
+                    for salary in tqdm(SALARY_RANGE, desc=f'salary [{market_scenario}/{transit_label}/{age}/{sex}]'):
+                        for payment_rate in PAYMENT_RATES:
+                            for i in range(N_SIMULATIONS):
+                                rates_vec = list(base_returns[:, i][::252])
+                                n = len(rates_vec)
 
-                        base_params = dict(
-                            n=n, age=AGE, sex=SEX,
-                            rates=rates_vec,
-                            payment_mode='relative',
-                            payment_rate=float(payment_rate),
-                            initial_salary=salary,
-                            tax_deduction_rate=TAX_RATE,
-                            salary_model=salary_model,
-                            unemployment_model=unemployment_model,
-                        )
+                                base_params = dict(
+                                    n=n, age=age, sex=sex,
+                                    rates=rates_vec,
+                                    payment_mode='relative',
+                                    payment_rate=float(payment_rate),
+                                    initial_salary=salary,
+                                    tax_deduction_rate=TAX_RATE,
+                                    salary_model=salary_model,
+                                    unemployment_model=unemployment_model,
+                                )
 
-                        pds_prog = PDSProgram(
-                            params=ProgramInput(**base_params), life_table=life_table
-                        )
-                        pds_prog.run()
-                        m_pds = pds_prog.compute_metrics()
+                                pds_prog = PDSProgram(
+                                    params=ProgramInput(**base_params), life_table=life_table
+                                )
+                                pds_prog.run()
+                                m_pds = pds_prog.compute_metrics()
 
-                        iis_prog = IIS3Program(
-                            params=ProgramInput(**base_params), life_table=life_table
-                        )
-                        iis_prog.run()
-                        m_iis = iis_prog.compute_metrics()
+                                iis_prog = IIS3Program(
+                                    params=ProgramInput(**base_params), life_table=life_table
+                                )
+                                iis_prog.run()
+                                m_iis = iis_prog.compute_metrics()
 
-                        rows.append({
-                            'market_scenario':     market_scenario,
-                            'transition_scenario': transit_label,
-                            'p_transition':        p_transit,
-                            'salary':              salary,
-                            'payment_rate':        float(payment_rate),
-                            'sim_id':              i,
-                            'roi_pds':             m_pds['roi'],
-                            'irr_pds':             m_pds['irr'],
-                            'twr_pds':             m_pds['twr'],
-                            'savings_pds':         m_pds['savings'],
-                            'kz_pds':              m_pds['kz'],
-                            'roi_iis':             m_iis['roi'],
-                            'irr_iis':             m_iis['irr'],
-                            'twr_iis':             m_iis['twr'],
-                            'savings_iis':         m_iis['savings'],
-                            'kz_iis':              m_iis['kz'],
-                        })
+                                rows.append({
+                                    'market_scenario':     market_scenario,
+                                    'transition_scenario': transit_label,
+                                    'p_transition':        p_transit,
+                                    'age':                 age,
+                                    'sex':                 sex,
+                                    'salary':              salary,
+                                    'payment_rate':        float(payment_rate),
+                                    'sim_id':              i,
+                                    'roi_pds':             m_pds['roi'],
+                                    'irr_pds':             m_pds['irr'],
+                                    'twr_pds':             m_pds['twr'],
+                                    'savings_pds':         m_pds['savings'],
+                                    'kz_pds':              m_pds['kz'],
+                                    'roi_iis':             m_iis['roi'],
+                                    'irr_iis':             m_iis['irr'],
+                                    'twr_iis':             m_iis['twr'],
+                                    'savings_iis':         m_iis['savings'],
+                                    'kz_iis':              m_iis['kz'],
+                                })
 
     df = pd.DataFrame(rows)
     df.to_csv(os.path.join(TEMP_DIR, 'h2h3_raw.csv'), index=False)
@@ -202,55 +205,61 @@ if __name__ == '__main__':
     summary_rows = []
     for market_scenario in MARKET_SCENARIOS:
         for transit_label in TRANSITION_SCENARIOS:
-            df_sc = df[(df['market_scenario'] == market_scenario) &
-                       (df['transition_scenario'] == transit_label)]
-            for salary in SALARY_RANGE:
-                sub = df_sc[df_sc['salary'] == salary]
-                agg = sub.groupby('payment_rate')[['roi_pds', 'roi_iis', 'irr_pds', 'irr_iis']].mean()
-                agg = agg.reset_index().sort_values('payment_rate')
+            for age in AGE_RANGE:
+                for sex in SEX_RANGE:
+                    df_sc = df[(df['market_scenario'] == market_scenario) &
+                               (df['transition_scenario'] == transit_label) &
+                               (df['age'] == age) & (df['sex'] == sex)]
+                    for salary in SALARY_RANGE:
+                        sub = df_sc[df_sc['salary'] == salary]
+                        agg = sub.groupby('payment_rate')[['roi_pds', 'roi_iis', 'irr_pds', 'irr_iis']].mean()
+                        agg = agg.reset_index().sort_values('payment_rate')
 
-                rates_arr     = agg['payment_rate'].values
-                advantage_roi = (agg['roi_pds'] - agg['roi_iis']).values
-                roi_pds_arr   = agg['roi_pds'].values
+                        rates_arr     = agg['payment_rate'].values
+                        advantage_roi = (agg['roi_pds'] - agg['roi_iis']).values
+                        roi_pds_arr   = agg['roi_pds'].values
 
-                inflection = find_inflection_points(rates_arr, advantage_roi)
+                        inflection = find_inflection_points(rates_arr, advantage_roi)
 
-                d_roi_pds = np.diff(roi_pds_arr)
-                h3_marginal_roi_decline_rate = None
-                for j, d in enumerate(d_roi_pds):
-                    if d < 0:
-                        h3_marginal_roi_decline_rate = float(rates_arr[j])
-                        break
+                        d_roi_pds = np.diff(roi_pds_arr)
+                        h3_marginal_roi_decline_rate = None
+                        for j, d in enumerate(d_roi_pds):
+                            if d < 0:
+                                h3_marginal_roi_decline_rate = float(rates_arr[j])
+                                break
 
-                theo_thresh = analytical_threshold(salary)
+                        theo_thresh = analytical_threshold(salary)
 
-                peak_rate = inflection['pds_max_advantage_rate']
-                sub_peak  = sub[np.isclose(sub['payment_rate'], peak_rate, atol=1e-5)]
-                pctiles   = [5, 25, 50, 75, 95]
-                pds_pct   = {f'roi_pds_p{p}': round(float(np.percentile(sub_peak['roi_pds'].dropna(), p)), 4)
-                             for p in pctiles}
-                iis_pct   = {f'roi_iis_p{p}': round(float(np.percentile(sub_peak['roi_iis'].dropna(), p)), 4)
-                             for p in pctiles}
+                        peak_rate = inflection['pds_max_advantage_rate']
+                        sub_peak  = sub[np.isclose(sub['payment_rate'], peak_rate, atol=1e-5)]
+                        pctiles   = [5, 25, 50, 75, 95]
+                        pds_pct   = {f'roi_pds_p{p}': round(float(np.percentile(sub_peak['roi_pds'].dropna(), p)), 4)
+                                     for p in pctiles}
+                        iis_pct   = {f'roi_iis_p{p}': round(float(np.percentile(sub_peak['roi_iis'].dropna(), p)), 4)
+                                     for p in pctiles}
 
-                summary_rows.append({
-                    'market_scenario':                     market_scenario,
-                    'transition_scenario':                 transit_label,
-                    'salary':                              salary,
-                    'analytical_cofin_cap_rate':           round(theo_thresh, 4),
-                    'h2_pds_max_advantage_rate':           round(inflection['pds_max_advantage_rate'], 4),
-                    'h2_pds_max_advantage_value':          round(inflection['pds_max_advantage_value'], 4),
-                    'h2_pds_iis_indifference_rate':        inflection['pds_iis_indifference_rate'],
-                    'h3_marginal_roi_decline_rate':        h3_marginal_roi_decline_rate,
-                    'max_roi_pds':                         round(float(roi_pds_arr.max()), 4),
-                    'min_roi_pds':                         round(float(roi_pds_arr.min()), 4),
-                    **pds_pct,
-                    **iis_pct,
-                })
+                        summary_rows.append({
+                            'market_scenario':                     market_scenario,
+                            'transition_scenario':                 transit_label,
+                            'age':                                 age,
+                            'sex':                                 sex,
+                            'salary':                              salary,
+                            'analytical_cofin_cap_rate':           round(theo_thresh, 4),
+                            'h2_pds_max_advantage_rate':           round(inflection['pds_max_advantage_rate'], 4),
+                            'h2_pds_max_advantage_value':          round(inflection['pds_max_advantage_value'], 4),
+                            'h2_pds_iis_indifference_rate':        inflection['pds_iis_indifference_rate'],
+                            'h3_marginal_roi_decline_rate':        h3_marginal_roi_decline_rate,
+                            'max_roi_pds':                         round(float(roi_pds_arr.max()), 4),
+                            'min_roi_pds':                         round(float(roi_pds_arr.min()), 4),
+                            **pds_pct,
+                            **iis_pct,
+                        })
 
     summary = pd.DataFrame(summary_rows)
     summary.to_csv(os.path.join(TEMP_DIR, 'h2h3_inflection_points.csv'), index=False)
     print("\nХарактерные точки по сценариям:")
-    print(summary[['market_scenario', 'transition_scenario', 'salary', 'analytical_cofin_cap_rate',
+    print(summary[['market_scenario', 'transition_scenario', 'age', 'sex', 'salary',
+                   'analytical_cofin_cap_rate',
                    'h2_pds_max_advantage_rate', 'h2_pds_iis_indifference_rate',
                    'h3_marginal_roi_decline_rate']].to_string(index=False))
     print(f"\nСохранено: {TEMP_DIR}/h2h3_inflection_points.csv")

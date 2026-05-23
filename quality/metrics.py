@@ -35,6 +35,8 @@ def twr_metric(portfolio_path: np.ndarray, payments: np.ndarray) -> float:
     return prod ** (1 / len(returns)) - 1 if returns else np.nan
 
 def kz_metric(pension: float, annual_salaries: np.ndarray, n: int) -> float:
+    if pension is None:
+        return np.nan
     avg_final_monthly_salary = (annual_salaries[-(n+1):-1] / 12).mean()
     return pension / avg_final_monthly_salary if avg_final_monthly_salary != 0 else np.nan
 

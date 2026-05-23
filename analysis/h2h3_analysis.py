@@ -51,6 +51,23 @@ COLOR_PDS  = '#2166ac'
 COLOR_IIS  = '#d73027'
 COLOR_DIFF = '#4dac26'
 
+REPRESENTATIVE_AGE = 40
+REPRESENTATIVE_SEX = 'M'
+
+DEMOGRAPHIC_GROUPS = [('M', 20), ('M', 40), ('M', 60), ('F', 20), ('F', 40), ('F', 60)]
+DEMOGRAPHIC_LABELS = {
+    ('M', 20): 'М, 20 лет', ('M', 40): 'М, 40 лет', ('M', 60): 'М, 60 лет',
+    ('F', 20): 'Ж, 20 лет', ('F', 40): 'Ж, 40 лет', ('F', 60): 'Ж, 60 лет',
+}
+DEMOGRAPHIC_COLORS = {
+    ('M', 20): '#1b9e77', ('M', 40): '#d95f02', ('M', 60): '#7570b3',
+    ('F', 20): '#e7298a', ('F', 40): '#66a61e', ('F', 60): '#e6ab02',
+}
+DEMOGRAPHIC_LINESTYLES = {
+    ('M', 20): '-', ('M', 40): '-', ('M', 60): '-',
+    ('F', 20): '--', ('F', 40): '--', ('F', 60): '--',
+}
+
 
 def load_data():
     for p in [DATA_RAW, DATA_INF]:
@@ -78,8 +95,8 @@ def plot_assumptions_table():
     rows = [
         ('Горизонт моделирования',        '15 лет'),
         ('Число симуляций',               '300'),
-        ('Возраст участника',             '40 лет'),
-        ('Пол',                           'М'),
+        ('Возраст участника',             '20, 40, 60 лет'),
+        ('Пол',                           'М и Ж'),
         ('Ставка взноса (развёртка)',      '0.5 % – 24 %, шаг 0.5 %'),
         ('Зарплатные группы',             '50 / 100 / 150 / 200 тыс. ₽/мес.'),
         ('Портфель ПДС',                  'Средний НПФ (структура из structure.xlsx)'),
@@ -132,7 +149,7 @@ def plot_roi_curves(df: pd.DataFrame, inf: pd.DataFrame):
     fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharey=False)
     axes = axes.flatten()
     fig.suptitle('H2/H3 — E[ROI] ПДС и ИИС-3 в зависимости от ставки взноса\n'
-                 '(лента = 25–75-й перцентиль)',
+                 '(лента = 25–75-й перцентиль, М, 40 лет)',
                  fontsize=13, y=1.01)
 
     for ax, salary in zip(axes, salary_vals):
@@ -185,7 +202,8 @@ def plot_advantage_curve(df: pd.DataFrame, inf: pd.DataFrame):
     salary_vals = sorted(df['salary'].unique())
     fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharey=False)
     axes = axes.flatten()
-    fig.suptitle('H2 — Преимущество ПДС над ИИС-3: advantage = E[ROI_ПДС] − E[ROI_ИИС-3]',
+    fig.suptitle('H2 — Преимущество ПДС над ИИС-3: advantage = E[ROI_ПДС] − E[ROI_ИИС-3]\n'
+                 '(М, 40 лет)',
                  fontsize=12, y=1.01)
 
     for ax, salary in zip(axes, salary_vals):
@@ -241,7 +259,7 @@ def plot_diminishing_returns(df: pd.DataFrame, inf: pd.DataFrame):
     fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharey=False)
     axes = axes.flatten()
     fig.suptitle('H3 — Убывание предельного ROI ПДС: E[ROI_ПДС], квадратичный тренд\n'
-                 '(лента = 25–75-й перцентиль)',
+                 '(лента = 25–75-й перцентиль, М, 40 лет)',
                  fontsize=12, y=1.01)
 
     poly_results = {}
@@ -296,11 +314,8 @@ def plot_inflection_table(inf: pd.DataFrame):
     """Сводная таблица характерных точек H2/H3 с уточнёнными названиями."""
     fig, ax = plt.subplots(figsize=(14, 2.8))
     ax.axis('off')
-    disp = inf[[
-        'salary', 'analytical_cofin_cap_rate',
-        'h2_pds_max_advantage_rate', 'h2_pds_iis_indifference_rate',
-        'h3_marginal_roi_decline_rate',
-    ]].copy()
+    disp = inf[['salary', 'analytical_cofin_cap_rate', 'h2_pds_max_advantage_rate',
+                'h2_pds_iis_indifference_rate', 'h3_marginal_roi_decline_rate']].copy()
     disp.columns = [
         'Зарплата (₽)',
         'Порог насыщения\nсо-финансирования',
@@ -331,7 +346,7 @@ def plot_inflection_table(inf: pd.DataFrame):
             cell.set_facecolor('#f7f7f7')
         cell.set_edgecolor('#cccccc')
 
-    ax.set_title('H2/H3 — Сводная таблица характерных точек',
+    ax.set_title('H2/H3 — Сводная таблица характерных точек (М, 40 лет)',
                  fontsize=11, pad=8)
     plt.tight_layout()
     path = os.path.join(FIGURES_DIR, 'h2h3_inflection_table.png')
@@ -343,38 +358,36 @@ def plot_inflection_table(inf: pd.DataFrame):
 # ─────────────────────────── Verdict ─────────────────────────────────────────
 def plot_percentile_fan(df: pd.DataFrame):
     """
-    Веерный график перцентилей ROI_ПДС по ставке взноса для каждой зарплаты.
-    Показывает риск: 5-й, 25-й, 50-й, 75-й, 95-й перцентили.
+    Наложенные полупрозрачные гистограммы ROI_ПДС и ROI_ИИС-3 при ставке взноса,
+    соответствующей точке максимального преимущества ПДС (для каждой зарплаты).
     """
     salary_vals = sorted(df['salary'].unique())
     fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharey=False)
     axes = axes.flatten()
-    fig.suptitle('H2/H3 — Перцентили ROI_ПДС по ставке взноса\n'
-                 '(5-й, 25-й, 50-й, 75-й, 95-й)',
+    fig.suptitle('H2/H3 — Распределения ROI_ПДС и ROI_ИИС-3\n'
+                 '(при ставке макс. преимущества ПДС, М, 40 лет)',
                  fontsize=12, y=1.01)
-
-    pctiles = [5, 25, 50, 75, 95]
-    alphas  = [0.10, 0.18, 1.0, 0.18, 0.10]
 
     for ax, salary in zip(axes, salary_vals):
         sub = df[df['salary'] == salary]
-        agg = sub.groupby('payment_rate')['roi_pds'].agg(
-            **{f'p{p}': (lambda x, _p=p: np.percentile(x, _p)) for p in pctiles}
-        ).reset_index()
-        x = agg['payment_rate'].values * 100
+        agg = sub.groupby('payment_rate')[['roi_pds', 'roi_iis']].mean().reset_index()
+        agg['advantage'] = agg['roi_pds'] - agg['roi_iis']
+        peak_rate = agg.loc[agg['advantage'].idxmax(), 'payment_rate']
 
-        ax.fill_between(x, agg['p5'],  agg['p95'], alpha=0.08, color=COLOR_PDS)
-        ax.fill_between(x, agg['p25'], agg['p75'], alpha=0.18, color=COLOR_PDS)
-        ax.plot(x, agg['p50'], color=COLOR_PDS, lw=2, label='Медиана (p50)')
-        ax.plot(x, agg['p5'],  color=COLOR_PDS, lw=0.8, linestyle=':', label='p5 / p95')
-        ax.plot(x, agg['p95'], color=COLOR_PDS, lw=0.8, linestyle=':')
-        ax.plot(x, agg['p25'], color=COLOR_PDS, lw=1.0, linestyle='--', label='p25 / p75')
-        ax.plot(x, agg['p75'], color=COLOR_PDS, lw=1.0, linestyle='--')
+        sub_peak = sub[np.isclose(sub['payment_rate'], peak_rate, atol=1e-5)]
 
-        ax.set_title(SALARY_LABELS.get(salary, f'{salary//1000} тыс.'), fontsize=10)
-        ax.set_xlabel('Ставка взноса (%)')
-        ax.set_ylabel('ROI_ПДС')
-        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+        ax.hist(sub_peak['roi_pds'].dropna(), bins=30, alpha=0.45, color=COLOR_PDS,
+                label='ROI ПДС', density=True, edgecolor='none')
+        ax.axvline(sub_peak['roi_pds'].median(), color=COLOR_PDS, linestyle='--', lw=1.3, alpha=0.85)
+        ax.hist(sub_peak['roi_iis'].dropna(), bins=30, alpha=0.45, color=COLOR_IIS,
+                label='ROI ИИС-3', density=True, edgecolor='none')
+        ax.axvline(sub_peak['roi_iis'].median(), color=COLOR_IIS, linestyle='--', lw=1.3, alpha=0.85)
+
+        ax.set_title(f'{SALARY_LABELS.get(salary, f"{salary//1000} тыс.")} | ставка={peak_rate:.1%}',
+                     fontsize=10)
+        ax.set_xlabel('ROI')
+        ax.set_ylabel('Плотность')
+        ax.xaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
         ax.legend(fontsize=8)
 
     for ax in axes[len(salary_vals):]:
@@ -389,16 +402,20 @@ def plot_percentile_fan(df: pd.DataFrame):
 def print_descriptive_stats(df: pd.DataFrame, inf: pd.DataFrame):
     """Таблица описательной статистики ROI_ПДС и ROI_ИИС по зарплатам."""
     print('\n' + '=' * 75)
-    print('  ОПИСАТЕЛЬНАЯ СТАТИСТИКА (при точке максимального преимущества ПДС)')
+    print('  ОПИСАТЕЛЬНАЯ СТАТИСТИКА (при точке максимального преимущества ПДС, М, 40 лет)')
     print('=' * 75)
     for salary in sorted(df['salary'].unique()):
-        peak_r = inf.loc[inf['salary'] == salary, 'h2_pds_max_advantage_rate'].values[0]
+        peak_r = inf.loc[inf['salary'] == salary, 'h2_pds_max_advantage_rate'].values
+        peak_r = float(peak_r[0]) if len(peak_r) > 0 and pd.notna(peak_r[0]) else None
+        if peak_r is None:
+            continue
         sub = df[(df['salary'] == salary) & np.isclose(df['payment_rate'], peak_r, atol=1e-5)]
-        print(f'\n  Зарплата {salary:,} ₽  |  ставка взноса = {peak_r:.1%}  '
-              f'(точка макс. преимущества ПДС)')
+        print(f'\n  Зарплата {salary:,} ₽  |  ставка взноса = {peak_r:.1%}')
         print(f'  {"":12} {"p5":>7} {"p25":>7} {"p50":>7} {"p75":>7} {"p95":>7} {"mean":>7} {"std":>7}')
         for col, label in [('roi_pds', 'ROI ПДС'), ('roi_iis', 'ROI ИИС-3')]:
             vals = sub[col].dropna()
+            if len(vals) == 0:
+                continue
             pcts = np.percentile(vals, [5, 25, 50, 75, 95])
             print(f'  {label:12} '
                   + ' '.join(f'{v:>7.1%}' for v in pcts)
@@ -408,7 +425,7 @@ def print_descriptive_stats(df: pd.DataFrame, inf: pd.DataFrame):
 
 def print_verdict(df: pd.DataFrame, inf: pd.DataFrame, poly_results: dict = None):
     print('\n' + '=' * 75)
-    print('  ВЕРДИКТ: ГИПОТЕЗЫ H2 и H3')
+    print('  ВЕРДИКТ: ГИПОТЕЗЫ H2 и H3 (М, 40 лет)')
     print('=' * 75)
 
     print('\nH2 — Точка максимального преимущества ПДС и точка безразличия:')
@@ -446,8 +463,8 @@ def print_verdict(df: pd.DataFrame, inf: pd.DataFrame, poly_results: dict = None
     print(f'  {"Зарплата":>10} | {"Порог насыщ.":>12} | {"Нач. убыв.":>10} | {"До порога?":>10} | {"Подтв."}')
     print('  ' + '-' * 62)
     h3_scores = []
-    for salary in sorted(inf['salary'].unique()):
-        row = inf[inf['salary'] == salary].iloc[0]
+    for _, row in inf.iterrows():
+        salary    = row['salary']
         cap_r     = float(row['analytical_cofin_cap_rate'])
         decline_r = row['h3_marginal_roi_decline_rate']
         has_decline = pd.notna(decline_r) and str(decline_r) not in ('None', 'nan')
@@ -462,7 +479,7 @@ def print_verdict(df: pd.DataFrame, inf: pd.DataFrame, poly_results: dict = None
             decline_str = '—'
             before_str  = '—'
         h3_scores.append(confirmed)
-        print(f'  {salary:>10,} | {cap_r:>12.1%} | {decline_str:>10} | {before_str:>10} | '
+        print(f'  {int(salary):>10,} | {cap_r:>12.1%} | {decline_str:>10} | {before_str:>10} | '
               f'{"✓" if confirmed else "✗"}')
 
     n_confirmed = sum(h3_scores)
@@ -611,6 +628,61 @@ def plot_transition_scenario_comparison(df: pd.DataFrame, inf: pd.DataFrame):
     print(f"  → {path}")
 
 
+def plot_demographic_robustness(df: pd.DataFrame, inf: pd.DataFrame):
+    """
+    Устойчивость кривой advantage(rate) к демографическим группам (возраст × пол).
+    Если линии близки — результат устойчив к демографическим характеристикам.
+    """
+    base = df[(df['market_scenario'] == 'baseline') &
+              (df['transition_scenario'] == 'baseline')]
+    base_inf = inf[(inf['market_scenario'] == 'baseline') &
+                   (inf['transition_scenario'] == 'baseline')]
+
+    salary_vals = sorted(base['salary'].unique())
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharey=False)
+    axes = axes.flatten()
+    fig.suptitle('H2 — Устойчивость точки максимального преимущества ПДС\n'
+                 'к демографическим группам (advantage = E[ROI_ПДС] − E[ROI_ИИС-3])',
+                 fontsize=12, y=1.01)
+
+    for ax, salary in zip(axes, salary_vals):
+        for (sex, age) in DEMOGRAPHIC_GROUPS:
+            sub = base[(base['sex'] == sex) & (base['age'] == age) &
+                       (base['salary'] == salary)]
+            if sub.empty:
+                continue
+            agg = sub.groupby('payment_rate')[['roi_pds', 'roi_iis']].mean().reset_index()
+            agg['advantage'] = agg['roi_pds'] - agg['roi_iis']
+
+            inf_row = base_inf[(base_inf['sex'] == sex) & (base_inf['age'] == age) &
+                               (base_inf['salary'] == salary)]
+            peak_r = inf_row['h2_pds_max_advantage_rate'].values[0] if len(inf_row) else None
+
+            ax.plot(agg['payment_rate'] * 100, agg['advantage'],
+                    color=DEMOGRAPHIC_COLORS[(sex, age)],
+                    linestyle=DEMOGRAPHIC_LINESTYLES[(sex, age)],
+                    lw=1.5, label=DEMOGRAPHIC_LABELS[(sex, age)])
+            if peak_r is not None and pd.notna(peak_r):
+                peak_adv = agg.loc[(agg['payment_rate'] - peak_r).abs().idxmin(), 'advantage']
+                ax.scatter([peak_r * 100], [peak_adv],
+                           color=DEMOGRAPHIC_COLORS[(sex, age)], zorder=5, s=40, marker='^')
+
+        ax.axhline(0, color='#333', lw=0.8)
+        ax.set_title(SALARY_LABELS.get(salary, f'{salary//1000} тыс.'), fontsize=10)
+        ax.set_xlabel('Ставка взноса (%)')
+        ax.set_ylabel('advantage (ROI_ПДС − ROI_ИИС3)')
+        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=1))
+        ax.legend(fontsize=7)
+
+    for ax in axes[len(salary_vals):]:
+        ax.set_visible(False)
+    plt.tight_layout()
+    path = os.path.join(FIGURES_DIR, 'h2h3_demographic_robustness.png')
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  → {path}")
+
+
 if __name__ == '__main__':
     print("Загружаю данные H2/H3...")
     df, inf = load_data()
@@ -620,8 +692,14 @@ if __name__ == '__main__':
 
     os.makedirs(FIGURES_DIR, exist_ok=True)
 
-    base_df  = df[(df['market_scenario'] == 'baseline') & (df['transition_scenario'] == 'baseline')]
-    base_inf = inf[(inf['market_scenario'] == 'baseline') & (inf['transition_scenario'] == 'baseline')]
+    base_df = df[(df['market_scenario'] == 'baseline') &
+                 (df['transition_scenario'] == 'baseline') &
+                 (df['age'] == REPRESENTATIVE_AGE) &
+                 (df['sex'] == REPRESENTATIVE_SEX)]
+    base_inf = inf[(inf['market_scenario'] == 'baseline') &
+                   (inf['transition_scenario'] == 'baseline') &
+                   (inf['age'] == REPRESENTATIVE_AGE) &
+                   (inf['sex'] == REPRESENTATIVE_SEX)]
 
     print("Строю графики...")
     plot_assumptions_table()
@@ -632,6 +710,7 @@ if __name__ == '__main__':
     plot_percentile_fan(base_df)
     plot_market_scenario_comparison(df, inf)
     plot_transition_scenario_comparison(df, inf)
+    plot_demographic_robustness(df, inf)
 
     print_descriptive_stats(base_df, base_inf)
     print_verdict(base_df, base_inf, poly_results)

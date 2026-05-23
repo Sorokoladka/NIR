@@ -55,7 +55,8 @@ def load_data():
 # ─────────────────────────── Figure 1 ────────────────────────────────────────
 def plot_winner_heatmap(winner: pd.DataFrame):
     """
-    Тепловая карта kz_delta = KZ_ПДС − KZ_ИИС3_best по age_group × sex.
+    Тепловая карта benefit_delta = Benefit_ПДС − Benefit_ИИС3_best по age_group × sex.
+    ПДС: KZ (коэфф. замещения), ИИС-3: накопления / годовая зарплата.
     Если есть оба сценария ставки взноса — два сабплота side-by-side.
     """
     PAY_LABELS = {'cap_rate': 'Аналит. ставка (макс. со-фин.)', '2x_cap_rate': '2× аналит. ставка'}
@@ -66,8 +67,7 @@ def plot_winner_heatmap(winner: pd.DataFrame):
 
     cmap = sns.diverging_palette(20, 220, as_cmap=True)
 
-    # общая цветовая шкала по всем сценариям
-    all_deltas = winner['kz_delta'].values
+    all_deltas = winner['benefit_delta'].values
     vmax = max(abs(all_deltas[np.isfinite(all_deltas)].max()),
                abs(all_deltas[np.isfinite(all_deltas)].min()))
 
@@ -76,16 +76,17 @@ def plot_winner_heatmap(winner: pd.DataFrame):
     if n == 1:
         axes = [axes]
 
-    fig.suptitle('H4 — Карта победителей: Δ(KZ) = KZ_ПДС − KZ_ИИС3_best\n'
+    fig.suptitle('H4 — Карта победителей: Δ = Benefit_ПДС − Benefit_ИИС3_best\n'
+                 'Benefit = накопления / среднегодовая зарплата\n'
                  'Синий = ПДС лучше, красный = ИИС-3 лучше',
-                 fontsize=12, y=1.02)
+                 fontsize=12, y=1.04)
 
     for ax, pay_sc in zip(axes, pay_scenarios):
         if 'payment_scenario' in winner.columns:
             sub = winner[winner['payment_scenario'] == pay_sc]
         else:
             sub = winner
-        pivot = sub.pivot(index='age_group', columns='sex', values='kz_delta')
+        pivot = sub.pivot(index='age_group', columns='sex', values='benefit_delta')
         pivot = pivot.reindex(AGE_ORDER)
 
         sns.heatmap(
@@ -93,7 +94,7 @@ def plot_winner_heatmap(winner: pd.DataFrame):
             cmap=cmap, center=0, vmin=-vmax, vmax=vmax,
             annot=True, fmt='.3f', annot_kws={'size': 9},
             linewidths=0.5, linecolor='#cccccc',
-            cbar_kws={'label': 'KZ_ПДС − KZ_ИИС3_best'},
+            cbar_kws={'label': 'Benefit_ПДС − Benefit_ИИС3_best'},
             cbar=(ax is axes[-1]),
         )
         ax.set_title(PAY_LABELS.get(pay_sc, pay_sc), fontsize=11)
@@ -109,7 +110,7 @@ def plot_winner_heatmap(winner: pd.DataFrame):
                     ax.text(sex_j + 0.5, age_i + 0.15,
                             '▲ПДС' if w == 'pds' else '▼ИИС',
                             ha='center', va='top', fontsize=7,
-                            color='white' if abs(row.iloc[0]['kz_delta']) > vmax * 0.3 else '#333')
+                            color='white' if abs(row.iloc[0]['benefit_delta']) > vmax * 0.3 else '#333')
 
     plt.tight_layout()
     path = os.path.join(FIGURES_DIR, 'h4_winner_heatmap.png')
@@ -182,48 +183,51 @@ def plot_population_bar(pop: pd.DataFrame, winner: pd.DataFrame):
 # ─────────────────────────── Figure 3 ────────────────────────────────────────
 def plot_kz_by_age(df: pd.DataFrame):
     """
-    E[KZ] ПДС vs лучшего ИИС-3 по возрастным группам (M и F отдельно).
-    Позволяет увидеть какие возрасты выигрывают от ПДС, а какие от ИИС-3.
+    E[Benefit] ПДС vs лучшего ИИС-3 по возрастным группам (M и F отдельно).
     """
     df_age = df.copy()
     df_age['age_group'] = pd.Categorical(df_age['age_group'],
                                           categories=AGE_ORDER, ordered=True)
 
-    # Лучший ИИС-3 = max KZ среди трёх аллокаций
+    # Лучший портфель ИИС-3 по медиане benefit в каждой ячейке (age_group × sex)
+    iis3_all = df_age[df_age['program'] == 'iis3']
+    best_portfolio = (
+        iis3_all.groupby(['age_group', 'sex', 'portfolio'])['benefit']
+        .median().reset_index()
+        .sort_values('benefit', ascending=False)
+        .drop_duplicates(['age_group', 'sex'])
+        .rename(columns={'benefit': '_med'})[['age_group', 'sex', 'portfolio']]
+    )
     iis3_best = (
-        df_age[df_age['program'] == 'iis3']
-        .groupby(['age_group', 'sex', 'sim_id'])['kz']
-        .max()
-        .reset_index()
+        iis3_all.merge(best_portfolio, on=['age_group', 'sex', 'portfolio'])
+        [['age_group', 'sex', 'sim_id', 'benefit']]
         .assign(program_label='ИИС-3 (лучший)')
     )
     pds_df = (
         df_age[df_age['program'] == 'pds']
-        .groupby(['age_group', 'sex', 'sim_id'])['kz']
-        .mean()
-        .reset_index()
+        [['age_group', 'sex', 'sim_id', 'benefit']]
         .assign(program_label='ПДС')
     )
     combined = pd.concat([pds_df, iis3_best], ignore_index=True)
-    combined = combined[combined['kz'].notna() & np.isfinite(combined['kz'])]
+    combined = combined[combined['benefit'].notna() & np.isfinite(combined['benefit'])]
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), sharey=True)
-    fig.suptitle('H4 — Медианный KZ (коэффициент замещения) по возрастным группам',
+    fig.suptitle('H4 — Медианный Benefit по возрастным группам\n'
+                 'Benefit = накопления / среднегодовая зарплата',
                  fontsize=12, y=1.02)
 
     palette = {'ПДС': COLOR_PDS, 'ИИС-3 (лучший)': COLOR_IIS}
     for ax, sex, sex_label in zip(axes, ['M', 'F'], ['Мужчины', 'Женщины']):
         sub = combined[combined['sex'] == sex]
         sns.boxplot(
-            data=sub, x='age_group', y='kz', hue='program_label',
+            data=sub, x='age_group', y='benefit', hue='program_label',
             order=AGE_ORDER, palette=palette,
             width=0.55, fliersize=1.5, ax=ax,
         )
         ax.set_title(sex_label, fontsize=11)
         ax.set_xlabel('Возрастная группа')
         if ax is axes[0]:
-            ax.set_ylabel('KZ (коэффициент замещения)')
-        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+            ax.set_ylabel('Benefit')
         ax.set_xticklabels(AGE_ORDER, rotation=30, ha='right', fontsize=9)
         ax.legend(title='', fontsize=9)
 
@@ -252,7 +256,7 @@ def plot_assumptions_table():
         ('Модель зарплаты',                     'StochasticSalaryModel'),
         ('Вероятность трудового перехода',      'Базовый: калибр. (ОРС 2024); альт.: p=0.10, p=0.15'),
         ('Таблица дожития',                     'life_duration.csv (Росстат)'),
-        ('Метрика победителя',                  'argmax E[KZ] по всем программам'),
+        ('Метрика победителя',                  'argmax E[Benefit]: накопления / среднегодовая зарплата'),
         ('Оценка численности',                  'ОРС Росстат 2024, наёмные 18–60, норм. к 56.5 млн'),
         ('Статистические тесты',                'Краскел-Уоллис (KZ по возрасту), Манн-Уитни (ПДС vs ИИС-3)'),
     ]
@@ -285,72 +289,55 @@ def plot_assumptions_table():
 
 def plot_kz_percentiles(df: pd.DataFrame):
     """
-    Веерный график перцентилей KZ по возрастным группам для ПДС и лучшего ИИС-3.
-    Показывает риск нехватки накоплений: 5-й, 25-й, 50-й, 75-й, 95-й перцентили.
+    Медиана Benefit + перцентильная лента (p5–p95) по возрастным группам.
+    Показывает рост накоплений с возрастом и расширение разброса.
     """
     base = df[df['transition_scenario'] == 'baseline']
     base = base.copy()
     base['age_group'] = pd.Categorical(base['age_group'], categories=AGE_ORDER, ordered=True)
 
-    iis3_best = (
-        base[base['program'] == 'iis3']
-        .groupby(['age_group', 'sex', 'sim_id'])['kz']
-        .max().reset_index()
+    # Лучший портфель ИИС-3 по медиане benefit в каждой ячейке (age_group × sex)
+    iis3_all = base[base['program'] == 'iis3']
+    best_portfolio = (
+        iis3_all.groupby(['age_group', 'sex', 'portfolio'])['benefit']
+        .median().reset_index()
+        .sort_values('benefit', ascending=False)
+        .drop_duplicates(['age_group', 'sex'])
+        .rename(columns={'benefit': '_med'})[['age_group', 'sex', 'portfolio']]
     )
-    pds_df = base[base['program'] == 'pds'].copy()
+    iis3_best = iis3_all.merge(best_portfolio, on=['age_group', 'sex', 'portfolio'])
+    iis3_best = iis3_best[['age_group', 'sex', 'sim_id', 'benefit']]
 
-    pctiles = [5, 25, 50, 75, 95]
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
-    fig.suptitle('H4 — Перцентили KZ по возрастным группам\n'
-                 '(базовый сценарий трудового перехода)',
+    pds_df = base[base['program'] == 'pds'][['age_group', 'sex', 'sim_id', 'benefit']].copy()
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5), sharey=True)
+    fig.suptitle('H4 — Медиана и разброс Benefit по возрастным группам\n'
+                 'Benefit = накопления / среднегодовая зарплата (лента = p5–p95)',
                  fontsize=12, y=1.02)
 
     for ax, sex, sex_label in zip(axes, ['M', 'F'], ['Мужчины', 'Женщины']):
-        pds_sub  = pds_df[pds_df['sex'] == sex]
-        iis_sub  = iis3_best[iis3_best['sex'] == sex] if 'sex' in iis3_best.columns else iis3_best
+        for data, color, label in [(pds_df, COLOR_PDS, 'ПДС'),
+                                   (iis3_best, COLOR_IIS, 'ИИС-3 (лучший)')]:
+            sub = data[data['sex'] == sex]
+            agg = sub.groupby('age_group', observed=True)['benefit'].agg(
+                median='median',
+                p5=lambda x: np.percentile(x.dropna(), 5),
+                p95=lambda x: np.percentile(x.dropna(), 95),
+            ).reindex(AGE_ORDER)
 
-        x = np.arange(len(AGE_ORDER))
-        width = 0.35
+            x = np.arange(len(AGE_ORDER))
+            ax.fill_between(x, agg['p5'].values, agg['p95'].values,
+                            alpha=0.15, color=color)
+            ax.plot(x, agg['median'].values, marker='o', lw=2, color=color,
+                    label=label)
 
-        for prog_data, offset, color, label_prefix in [
-            (pds_sub,  -width/2, COLOR_PDS, 'ПДС'),
-            (iis_sub,   width/2, COLOR_IIS, 'ИИС-3'),
-        ]:
-            medians = []
-            p25s, p75s, p5s, p95s = [], [], [], []
-            for ag in AGE_ORDER:
-                vals = prog_data[prog_data['age_group'] == ag]['kz'].dropna()
-                if len(vals) > 0:
-                    medians.append(np.percentile(vals, 50))
-                    p25s.append(np.percentile(vals, 25))
-                    p75s.append(np.percentile(vals, 75))
-                    p5s.append(np.percentile(vals, 5))
-                    p95s.append(np.percentile(vals, 95))
-                else:
-                    medians.append(np.nan)
-                    p25s.append(np.nan); p75s.append(np.nan)
-                    p5s.append(np.nan);  p95s.append(np.nan)
-
-            xi = x + offset
-            ax.bar(xi, medians, width, color=color, alpha=0.75, label=f'{label_prefix} медиана')
-            ax.errorbar(xi, medians,
-                        yerr=[np.array(medians) - np.array(p25s),
-                              np.array(p75s) - np.array(medians)],
-                        fmt='none', color=color, capsize=3, lw=1.5, label=f'{label_prefix} 25–75%')
-            ax.errorbar(xi, medians,
-                        yerr=[np.array(medians) - np.array(p5s),
-                              np.array(p95s) - np.array(medians)],
-                        fmt='none', color=color, capsize=2, lw=0.8, alpha=0.5,
-                        label=f'{label_prefix} 5–95%')
-
-        ax.set_xticks(x)
+        ax.set_xticks(np.arange(len(AGE_ORDER)))
         ax.set_xticklabels(AGE_ORDER, rotation=30, ha='right', fontsize=9)
         ax.set_title(sex_label, fontsize=11)
         ax.set_xlabel('Возрастная группа')
         if ax is axes[0]:
-            ax.set_ylabel('KZ (коэффициент замещения)')
-        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
-        ax.legend(fontsize=7.5, ncol=2)
+            ax.set_ylabel('Benefit')
+        ax.legend(fontsize=9)
 
     plt.tight_layout()
     path = os.path.join(FIGURES_DIR, 'h4_kz_percentiles.png')
@@ -361,8 +348,7 @@ def plot_kz_percentiles(df: pd.DataFrame):
 
 def plot_transition_scenario_comparison(df: pd.DataFrame):
     """
-    Сравнение медианного KZ ПДС по сценариям вероятности трудового перехода.
-    Если результаты радикально меняются — это важный вывод об устойчивости.
+    Сравнение медианного Benefit по сценариям вероятности трудового перехода.
     """
     scenarios = [s for s in ['baseline', 'low_transit', 'mid_transit']
                  if s in df['transition_scenario'].unique()]
@@ -378,16 +364,16 @@ def plot_transition_scenario_comparison(df: pd.DataFrame):
     linestyles = {'baseline': '-', 'low_transit': '--', 'mid_transit': ':'}
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle('H4 — Устойчивость медианного KZ к сценариям трудового перехода\n'
+    fig.suptitle('H4 — Устойчивость медианного Benefit к сценариям трудового перехода\n'
                  '(ПДС vs лучший ИИС-3)',
                  fontsize=12, y=1.02)
 
     for ax, sex, sex_label in zip(axes, ['M', 'F'], ['Мужчины', 'Женщины']):
         for scenario in scenarios:
             sub = df[(df['transition_scenario'] == scenario) & (df['sex'] == sex)]
-            pds_med = [sub[(sub['program'] == 'pds') & (sub['age_group'] == ag)]['kz']
+            pds_med = [sub[(sub['program'] == 'pds') & (sub['age_group'] == ag)]['benefit']
                        .median() for ag in AGE_ORDER]
-            iis_med = [sub[(sub['program'] == 'iis3') & (sub['age_group'] == ag)]['kz']
+            iis_med = [sub[(sub['program'] == 'iis3') & (sub['age_group'] == ag)]['benefit']
                        .median() for ag in AGE_ORDER]
             label = TRANSIT_LABELS.get(scenario, scenario)
             ax.plot(AGE_ORDER, pds_med, marker='o', lw=1.8, color=COLOR_PDS,
@@ -401,8 +387,7 @@ def plot_transition_scenario_comparison(df: pd.DataFrame):
         ax.set_xlabel('Возрастная группа')
         ax.set_xticklabels(AGE_ORDER, rotation=30, ha='right', fontsize=9)
         if ax is axes[0]:
-            ax.set_ylabel('Медиана KZ')
-        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+            ax.set_ylabel('Медиана Benefit')
         ax.legend(fontsize=7, ncol=2)
 
     plt.tight_layout()
@@ -413,11 +398,12 @@ def plot_transition_scenario_comparison(df: pd.DataFrame):
 
 
 def print_descriptive_stats(df: pd.DataFrame):
-    """Таблица описательной статистики KZ по возрастным группам (базовый сценарий)."""
+    """Таблица описательной статистики Benefit по возрастным группам (базовый сценарий)."""
     base = df[df['transition_scenario'] == 'baseline']
     pctiles = [5, 25, 50, 75, 95]
     print('\n' + '=' * 80)
-    print('  ОПИСАТЕЛЬНАЯ СТАТИСТИКА KZ (базовый сценарий трудового перехода)')
+    print('  ОПИСАТЕЛЬНАЯ СТАТИСТИКА BENEFIT (базовый сценарий трудового перехода)')
+    print('  Benefit = накопления / среднегодовая зарплата')
     print('=' * 80)
     print(f"  {'Группа':7} {'Пол':3} {'Программа':10} "
           + " ".join(f"p{p:>3}" for p in pctiles) + "   mean    std")
@@ -428,7 +414,7 @@ def print_descriptive_stats(df: pd.DataFrame):
                 ('ИИС-3', (base['program'] == 'iis3')),
             ]:
                 sub = base[(base['age_group'] == age_g) & (base['sex'] == sex) & prog_filter]
-                vals = sub['kz'].dropna()
+                vals = sub['benefit'].dropna()
                 if len(vals) == 0:
                     continue
                 pcts = np.percentile(vals, pctiles)
@@ -440,29 +426,28 @@ def print_descriptive_stats(df: pd.DataFrame):
 
 
     """
-    Тест Краскела-Уоллиса: различается ли KZ_ПДС по возрастным группам?
+    Тест Краскела-Уоллиса: различается ли Benefit по возрастным группам?
     Тест Манна-Уитни: ПДС vs лучший ИИС-3 внутри каждой возрастной группы.
     """
     results = {'kruskal': {}, 'mw_per_age': {}}
 
     for prog, prog_label in [('pds', 'ПДС'), ('iis3', 'ИИС-3')]:
         sub  = df[df['program'] == prog]
-        groups = [sub.loc[sub['age_group'] == ag, 'kz'].dropna().values for ag in AGE_ORDER]
+        groups = [sub.loc[sub['age_group'] == ag, 'benefit'].dropna().values for ag in AGE_ORDER]
         groups = [g for g in groups if len(g) > 5]
         if len(groups) >= 2:
             h, p = stats.kruskal(*groups)
             results['kruskal'][prog_label] = {'H': h, 'p': p}
 
-    # ПДС vs лучший ИИС-3 на каждую возрастную группу
     iis3_best_by_group = (
         df[df['program'] == 'iis3']
-        .groupby(['age_group', 'sex', 'sim_id'])['kz']
+        .groupby(['age_group', 'sex', 'sim_id'])['benefit']
         .max()
         .reset_index()
     )
     for age_g in AGE_ORDER:
-        pds_vals = df.loc[(df['program'] == 'pds') & (df['age_group'] == age_g), 'kz'].dropna()
-        iis_vals = iis3_best_by_group.loc[iis3_best_by_group['age_group'] == age_g, 'kz'].dropna()
+        pds_vals = df.loc[(df['program'] == 'pds') & (df['age_group'] == age_g), 'benefit'].dropna()
+        iis_vals = iis3_best_by_group.loc[iis3_best_by_group['age_group'] == age_g, 'benefit'].dropna()
         if len(pds_vals) > 5 and len(iis_vals) > 5:
             u, p = stats.mannwhitneyu(pds_vals, iis_vals, alternative='two-sided')
             med_diff = float(pds_vals.median()) - float(iis_vals.median())
@@ -480,25 +465,22 @@ def run_tests(df: pd.DataFrame) -> dict:
     """Краскел-Уоллис по возрасту + Манн-Уитни ПДС vs лучший ИИС-3 по каждой группе."""
     from scipy import stats as scipy_stats
 
-    # Кruskal-Wallis: KZ неоднороден по возрасту?
     kruskal = {}
     for prog, filt in [('ПДС', df['portfolio'] == 'pds_avg'),
                        ('ИИС-3', df['program'] == 'iis3')]:
-        groups = [df.loc[filt & (df['age_group'] == ag), 'kz'].dropna().values
+        groups = [df.loc[filt & (df['age_group'] == ag), 'benefit'].dropna().values
                   for ag in sorted(df['age_group'].unique())]
         groups = [g for g in groups if len(g) > 0]
         H, p = scipy_stats.kruskal(*groups)
         kruskal[prog] = {'H': float(H), 'p': float(p)}
 
-    # Mann-Whitney: ПДС vs лучший ИИС-3 per age_group
     mw_per_age = {}
     for age_g in sorted(df['age_group'].unique()):
         sub = df[df['age_group'] == age_g]
-        a_pds = sub.loc[sub['portfolio'] == 'pds_avg', 'kz'].dropna().values
-        # лучший ИИС-3 = тот, у которого выше медиана KZ
+        a_pds = sub.loc[sub['portfolio'] == 'pds_avg', 'benefit'].dropna().values
         best_iis = (sub[sub['program'] == 'iis3']
-                    .groupby('portfolio')['kz'].median().idxmax())
-        a_iis = sub.loc[sub['portfolio'] == best_iis, 'kz'].dropna().values
+                    .groupby('portfolio')['benefit'].median().idxmax())
+        a_iis = sub.loc[sub['portfolio'] == best_iis, 'benefit'].dropna().values
         if len(a_pds) == 0 or len(a_iis) == 0:
             continue
         u, p = scipy_stats.mannwhitneyu(a_pds, a_iis, alternative='two-sided')
@@ -544,14 +526,12 @@ def print_verdict(winner: pd.DataFrame, pop: pd.DataFrame, tests: dict):
             prog = 'ПДС' if row['winner'] == 'pds' else 'ИИС-3'
             print(f'    {prog}: {row["population_mln"]:.1f} млн чел. ({row["share_pct"]:.0f}%)')
 
-    # Тест Краскела-Уоллиса (на cap_rate срезе)
-    print('\nТест Краскела-Уоллиса (KZ неоднороден по возрасту, аналит. ставка):')
+    print('\nТест Краскела-Уоллиса (Benefit неоднороден по возрасту, аналит. ставка):')
     for prog, res in tests['kruskal'].items():
         sig = '***' if res['p'] < 0.001 else ('**' if res['p'] < 0.01 else ('*' if res['p'] < 0.05 else 'ns'))
         print(f'  {prog}: H={res["H"]:.2f}, p={res["p"]:.4f} {sig}')
 
-    # Манн-Уитни по возрастам (cap_rate)
-    print('\nПДС vs ИИС-3 (лучший) по возрастным группам, аналит. ставка (медиана KZ):')
+    print('\nПДС vs ИИС-3 (лучший) по возрастным группам, аналит. ставка (медиана Benefit):')
     print(f'  {"Группа":>7} | {"ПДС":>6} | {"ИИС-3":>6} | {"Δ":>7} | {"p":>7} | {"Победитель"}')
     print('  ' + '-' * 55)
     for age_g, r in tests['mw_per_age'].items():
@@ -559,7 +539,6 @@ def print_verdict(winner: pd.DataFrame, pop: pd.DataFrame, tests: dict):
         print(f'  {age_g:>7} | {r["med_pds"]:>6.2%} | {r["med_iis"]:>6.2%} | '
               f'{r["delta"]:>+7.2%} | {r["p"]:>7.4f}{sig} | {r["winner"]}')
 
-    # Итоговый вердикт — учитываем оба сценария
     wm_2x = winner[winner['payment_scenario'] == '2x_cap_rate'] if 'payment_scenario' in winner.columns else pd.DataFrame()
     heterogeneous_2x = (not wm_2x.empty and
                         (wm_2x['winner'] == 'pds').sum() > 0 and
@@ -586,8 +565,7 @@ def print_verdict(winner: pd.DataFrame, pop: pd.DataFrame, tests: dict):
 
 def plot_market_scenario_comparison(df: pd.DataFrame):
     """
-    Сравнение медианного KZ ПДС по трём рыночным сценариям.
-    Показывает устойчивость карты победителей к рыночным предположениям.
+    Сравнение медианного Benefit по трём рыночным сценариям.
     """
     scenarios = [s for s in ['baseline', 'stress', 'optimistic']
                  if s in df['market_scenario'].unique()]
@@ -602,7 +580,7 @@ def plot_market_scenario_comparison(df: pd.DataFrame):
     base_transit = df[df['transition_scenario'] == 'baseline'] if 'transition_scenario' in df.columns else df
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle('H4 — Устойчивость медианного KZ к рыночным сценариям\n'
+    fig.suptitle('H4 — Устойчивость медианного Benefit к рыночным сценариям\n'
                  '(ПДС vs лучший ИИС-3, базовый сценарий трудового перехода)',
                  fontsize=12, y=1.02)
 
@@ -610,9 +588,9 @@ def plot_market_scenario_comparison(df: pd.DataFrame):
         for scenario in scenarios:
             sub = base_transit[(base_transit['market_scenario'] == scenario) &
                                (base_transit['sex'] == sex)]
-            pds_med = [sub[(sub['program'] == 'pds') & (sub['age_group'] == ag)]['kz']
+            pds_med = [sub[(sub['program'] == 'pds') & (sub['age_group'] == ag)]['benefit']
                        .median() for ag in AGE_ORDER]
-            iis_med = [sub[(sub['program'] == 'iis3') & (sub['age_group'] == ag)]['kz']
+            iis_med = [sub[(sub['program'] == 'iis3') & (sub['age_group'] == ag)]['benefit']
                        .median() for ag in AGE_ORDER]
             label = SCENARIO_LABELS.get(scenario, scenario)
             ax.plot(AGE_ORDER, pds_med, marker='o', lw=1.8, color=SCENARIO_COLORS[scenario],
@@ -624,8 +602,7 @@ def plot_market_scenario_comparison(df: pd.DataFrame):
         ax.set_xlabel('Возрастная группа')
         ax.set_xticklabels(AGE_ORDER, rotation=30, ha='right', fontsize=9)
         if ax is axes[0]:
-            ax.set_ylabel('Медиана KZ')
-        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+            ax.set_ylabel('Медиана Benefit')
         ax.legend(fontsize=7, ncol=2)
 
     plt.tight_layout()
@@ -638,7 +615,7 @@ def plot_market_scenario_comparison(df: pd.DataFrame):
 def plot_payment_scenario_comparison(df: pd.DataFrame, winner: pd.DataFrame):
     """
     Сравнение двух сценариев ставки взноса: cap_rate vs 2x_cap_rate.
-    Показывает как меняется Δ(KZ) = KZ_ПДС − KZ_ИИС3_best при удвоении взноса.
+    Показывает как меняется Δ(Benefit) = Benefit_ПДС − Benefit_ИИС3_best при удвоении взноса.
     """
     PAY_LABELS  = {'cap_rate': 'Аналит. ставка (макс. со-фин.)', '2x_cap_rate': '2× аналит. ставка'}
     PAY_COLORS  = {'cap_rate': '#2166ac', '2x_cap_rate': '#d73027'}
@@ -648,14 +625,14 @@ def plot_payment_scenario_comparison(df: pd.DataFrame, winner: pd.DataFrame):
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle('H4 — Влияние ставки взноса на преимущество ПДС над ИИС-3\n'
-                 'Δ(KZ) = KZ_ПДС − KZ_ИИС3_best (базовый рыночный + трудовой сценарий)',
+                 'Δ(Benefit) = Benefit_ПДС − Benefit_ИИС3_best (базовый сценарий)',
                  fontsize=12, y=1.02)
 
     for ax, sex, sex_label in zip(axes, ['M', 'F'], ['Мужчины', 'Женщины']):
         for pay_sc in pay_scenarios:
             sub = winner[(winner['payment_scenario'] == pay_sc) & (winner['sex'] == sex)]
             sub = sub.set_index('age_group').reindex(AGE_ORDER).reset_index()
-            ax.plot(AGE_ORDER, sub['kz_delta'].values,
+            ax.plot(AGE_ORDER, sub['benefit_delta'].values,
                     marker=PAY_MARKERS[pay_sc], lw=2,
                     color=PAY_COLORS[pay_sc],
                     label=PAY_LABELS[pay_sc])
@@ -664,8 +641,7 @@ def plot_payment_scenario_comparison(df: pd.DataFrame, winner: pd.DataFrame):
         ax.set_xlabel('Возрастная группа')
         ax.set_xticklabels(AGE_ORDER, rotation=30, ha='right', fontsize=9)
         if ax is axes[0]:
-            ax.set_ylabel('Δ KZ (ПДС − ИИС-3)')
-        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=1))
+            ax.set_ylabel('Δ Benefit (ПДС − ИИС-3)')
         ax.legend(fontsize=9)
 
     plt.tight_layout()
@@ -727,6 +703,6 @@ if __name__ == '__main__':
             n_pds = (wm['winner'] == 'pds').sum()
             n_iis = (wm['winner'] == 'iis3').sum()
             total = len(wm)
-            delta_mean = wm['kz_delta'].mean()
+            delta_mean = wm['benefit_delta'].mean()
             print(f"  {PAY_LABELS[pay_sc]:30}: ПДС {n_pds}/{total}, ИИС-3 {n_iis}/{total}, "
-                  f"среднее Δ(KZ) = {delta_mean:+.3%}")
+                  f"среднее Δ(Benefit) = {delta_mean:+.3%}")

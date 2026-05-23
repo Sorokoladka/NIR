@@ -223,9 +223,14 @@ if __name__ == '__main__':
 
                                 prog = (PDSProgram(params=params, life_table=life_table)
                                         if is_pds
-                                        else IIS3Program(params=params, life_table=life_table))
+                                        else IIS3Program(params=params, life_table=None))
                                 prog.run()
                                 m = prog.compute_metrics()
+
+                                # Единая метрика: накопления / среднегодовая зарплата
+                                avg_final_annual = (prog.annual_salaries[-(params.n+1):-1]).mean()
+                                benefit_metric = (m['savings'] / avg_final_annual
+                                                  if avg_final_annual > 0 else np.nan)
 
                                 rows.append({
                                     'market_scenario':     market_scenario,
@@ -241,6 +246,7 @@ if __name__ == '__main__':
                                     'portfolio':   portfolio_label,
                                     'sim_id':      i,
                                     'kz':          m['kz'],
+                                    'benefit':     benefit_metric,
                                     'first_pension': prog.first_pension,
                                     'irr':         m['irr'],
                                     'roi':         m['roi'],
@@ -261,25 +267,25 @@ if __name__ == '__main__':
                   (df['transition_scenario'] == 'baseline') &
                   (df['payment_scenario'] == pay_sc)]
 
-        mean_kz = (
-            base.groupby(['age_group', 'sex', 'portfolio'])['kz']
-            .mean().reset_index().rename(columns={'kz': 'mean_kz'})
+        mean_benefit = (
+            base.groupby(['age_group', 'sex', 'portfolio'])['benefit']
+            .mean().reset_index().rename(columns={'benefit': 'mean_benefit'})
         )
-        iis3_kz   = mean_kz[mean_kz['portfolio'].str.startswith('iis3')]
-        iis3_best = (iis3_kz.groupby(['age_group', 'sex'])['mean_kz']
-                     .max().reset_index().rename(columns={'mean_kz': 'kz_iis3_best'}))
-        pds_kz    = (mean_kz[mean_kz['portfolio'] == 'pds_avg'][['age_group', 'sex', 'mean_kz']]
-                     .rename(columns={'mean_kz': 'kz_pds'}))
+        iis3_ben   = mean_benefit[mean_benefit['portfolio'].str.startswith('iis3')]
+        iis3_best = (iis3_ben.groupby(['age_group', 'sex'])['mean_benefit']
+                     .max().reset_index().rename(columns={'mean_benefit': 'benefit_iis3_best'}))
+        pds_ben    = (mean_benefit[mean_benefit['portfolio'] == 'pds_avg'][['age_group', 'sex', 'mean_benefit']]
+                     .rename(columns={'mean_benefit': 'benefit_pds'}))
 
-        wm = iis3_best.merge(pds_kz, on=['age_group', 'sex'])
-        wm['winner']          = np.where(wm['kz_pds'] >= wm['kz_iis3_best'], 'pds', 'iis3')
-        wm['kz_delta']        = (wm['kz_pds'] - wm['kz_iis3_best']).round(4)
+        wm = iis3_best.merge(pds_ben, on=['age_group', 'sex'])
+        wm['winner']           = np.where(wm['benefit_pds'] >= wm['benefit_iis3_best'], 'pds', 'iis3')
+        wm['benefit_delta']    = (wm['benefit_pds'] - wm['benefit_iis3_best']).round(4)
         wm['payment_scenario'] = pay_sc
 
         pds_pct = (
             base[base['portfolio'] == 'pds_avg']
-            .groupby(['age_group', 'sex'])['kz']
-            .agg(**{f'kz_pds_p{p}': (lambda x, _p=p: np.percentile(x.dropna(), _p))
+            .groupby(['age_group', 'sex'])['benefit']
+            .agg(**{f'benefit_pds_p{p}': (lambda x, _p=p: np.percentile(x.dropna(), _p))
                     for p in pctiles})
             .reset_index()
         )
@@ -296,8 +302,8 @@ if __name__ == '__main__':
         pop_summaries.append(pop)
 
         print(f"\n=== Карта победителей [{pay_sc}] ===")
-        print(wm[['age_group', 'sex', 'kz_pds', 'kz_iis3_best',
-                   'winner', 'kz_delta', 'population_mln']].to_string(index=False))
+        print(wm[['age_group', 'sex', 'benefit_pds', 'benefit_iis3_best',
+                   'winner', 'benefit_delta', 'population_mln']].to_string(index=False))
 
     winner_map = pd.concat(winner_maps, ignore_index=True)
     pop_summary = pd.concat(pop_summaries, ignore_index=True)
