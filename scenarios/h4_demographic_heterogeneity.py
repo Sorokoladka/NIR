@@ -49,7 +49,7 @@ import os
 TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_data')
 
 # ── параметры ─────────────────────────────────────────────────────────────────
-N_SIMULATIONS = 300
+N_SIMULATIONS = 5000
 N_YEARS       = 15
 TAX_RATE      = 0.13
 

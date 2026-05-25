@@ -51,7 +51,7 @@ import os
 TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_data')
 
 # ── параметры эксперимента ────────────────────────────────────────────────────
-N_SIMULATIONS = 500
+N_SIMULATIONS = 5000
 N_YEARS       = 15
 PAYMENT_RATE  = 0.06          # 6 % от зарплаты
 TAX_RATE      = 0.13
