@@ -307,7 +307,7 @@ def plot_distributions(df: pd.DataFrame):
 def plot_by_salary(df: pd.DataFrame):
     """Средний TWR и IRR по уровням зарплаты — показывает устойчивость результата."""
     salary_vals = sorted(df['salary'].unique())
-    portfolio_order = list(LABELS.keys())
+    portfolio_order = ['pds_avg', 'iis3_20/80']
     palette = [COLORS[p] for p in portfolio_order]
 
     fig, axes = plt.subplots(2, len(salary_vals), figsize=(14, 7), sharey='row')
@@ -315,7 +315,7 @@ def plot_by_salary(df: pd.DataFrame):
 
     for col, salary in enumerate(salary_vals):
         sub = df[df['salary'] == salary]
-        for row, metric in enumerate(['twr', 'irr']):
+        for row, metric in enumerate(['irr']):
             ax = axes[row, col]
             means = [sub.loc[sub['portfolio'] == p, metric].median() for p in portfolio_order]
             bars = ax.bar(range(len(portfolio_order)), means, color=palette, width=0.6, edgecolor='white')
@@ -333,7 +333,7 @@ def plot_by_salary(df: pd.DataFrame):
                         f'{val:.1%}', ha='center', va='bottom', fontsize=7.5)
 
     plt.tight_layout()
-    path = os.path.join(FIGURES_DIR, 'h1_by_salary.png')
+    path = os.path.join(FIGURES_DIR, 'h1_by_salary_.png')
     plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  → {path}")
@@ -550,16 +550,16 @@ if __name__ == '__main__':
                  (df['sex'] == REPRESENTATIVE_SEX)]
 
     print("Строю графики...")
-    plot_assumptions_table()
-    plot_distributions(repr_df)
+    # plot_assumptions_table()
+    # plot_distributions(repr_df)
     plot_by_salary(repr_df)
-    plot_twr_vs_irr(repr_df)
-    plot_percentile_distributions(repr_df)
-    plot_transition_scenario_comparison(df)
-    plot_market_scenario_comparison(df)
-    plot_demographic_robustness(df)
-
-    print_descriptive_stats(repr_df)
-
-    results = run_tests(repr_df)
-    print_verdict(results, repr_df)
+    # plot_twr_vs_irr(repr_df)
+    # plot_percentile_distributions(repr_df)
+    # plot_transition_scenario_comparison(df)
+    # plot_market_scenario_comparison(df)
+    # plot_demographic_robustness(df)
+    #
+    # print_descriptive_stats(repr_df)
+    #
+    # results = run_tests(repr_df)
+    # print_verdict(results, repr_df)
